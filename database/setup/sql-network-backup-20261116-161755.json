@@ -1,0 +1,107 @@
+﻿[
+    {
+        "Path":  "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer",
+        "Name":  "LoginMode",
+        "Value":  1
+    },
+    {
+        "Path":  "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp",
+        "Name":  "ListenOnAllIPs",
+        "Value":  1
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP1",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP10",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP11",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP12",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP13",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP14",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP15",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP16",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP2",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP3",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP4",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP5",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP6",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP7",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP8",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "Microsoft.PowerShell.Core\\Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IP9",
+        "Name":  "Enabled",
+        "Value":  0
+    },
+    {
+        "Path":  "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll",
+        "Name":  "TcpPort",
+        "Value":  "1433"
+    },
+    {
+        "Path":  "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll",
+        "Name":  "TcpDynamicPorts",
+        "Value":  ""
+    }
+]

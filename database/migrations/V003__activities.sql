@@ -32,6 +32,8 @@
    - activities has NO transaction status column.
    - idempotency_keys is permanent: no expiry column, no purge.
    - idempotency_keys.activity_id has deliberately NO foreign key.
+   - idempotency_keys also protects POST /devices (Revision 10/11): activity_type
+     'device' with device_id (FK to devices) instead of activity_id/form_number.
    - The SET options below are required to create the index on the persisted
      computed column and, later, for any session that writes to activities.
    ============================================================================ */
@@ -268,20 +270,31 @@ END');
     CREATE TABLE dbo.idempotency_keys (
         user_id          UNIQUEIDENTIFIER NOT NULL,
         idempotency_key  VARCHAR(64)      NOT NULL,
-        activity_type    VARCHAR(15)      NOT NULL,       -- endpoint the key was first used on
+        activity_type    VARCHAR(15)      NOT NULL,       -- endpoint the key was first used on: installation / replacement / removal / troubleshoot / device
         request_hash     CHAR(64)         NOT NULL,       -- SHA-256 of the canonical validated request
-        activity_id      UNIQUEIDENTIFIER NULL,           -- NULL only while the creating transaction is uncommitted; NOT a foreign key
-        form_number      NVARCHAR(30)     NULL,           -- NULL only while uncommitted
+        activity_id      UNIQUEIDENTIFIER NULL,           -- transaction keys: NULL only while the creating transaction is uncommitted; NOT a foreign key
+        form_number      NVARCHAR(30)     NULL,           -- transaction keys: NULL only while uncommitted
+        device_id        UNIQUEIDENTIFIER NULL,           -- device keys (POST /devices): NULL only while uncommitted; devices are never hard-deleted, so a FK is safe
         created_at       DATETIME2(0)     NOT NULL
             CONSTRAINT DF_idempotency_keys_created_at DEFAULT (SYSUTCDATETIME()),
         CONSTRAINT PK_idempotency_keys PRIMARY KEY (user_id, idempotency_key),
         CONSTRAINT FK_idempotency_keys_users
             FOREIGN KEY (user_id) REFERENCES dbo.users (user_id),
-        /* The two columns are populated together or not at all. The service must
-           populate both before COMMIT (design 3.19 invariant). */
-        CONSTRAINT CK_idempotency_keys_activity_form_together
-            CHECK ((activity_id IS NULL AND form_number IS NULL)
-                OR (activity_id IS NOT NULL AND form_number IS NOT NULL))
+        CONSTRAINT FK_idempotency_keys_devices
+            FOREIGN KEY (device_id) REFERENCES dbo.devices (device_id),
+        /* Transaction keys: activity_id and form_number are populated together or
+           not at all, and device_id stays NULL. Device keys (activity_type =
+           'device'): activity_id and form_number stay NULL; device_id is populated
+           by the service before COMMIT. SQL Server has no deferred constraints, so
+           "populated before COMMIT" is a service obligation (design 3.19). */
+        CONSTRAINT CK_idempotency_keys_resource_populated
+            CHECK ((activity_type <> 'device'
+                    AND device_id IS NULL
+                    AND ((activity_id IS NULL AND form_number IS NULL)
+                      OR (activity_id IS NOT NULL AND form_number IS NOT NULL)))
+                OR (activity_type = 'device'
+                    AND activity_id IS NULL
+                    AND form_number IS NULL))
     );
 
     COMMIT TRANSACTION;
