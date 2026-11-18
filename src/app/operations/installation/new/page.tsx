@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import InstallationCreateApi from "@/components/operations/InstallationCreateApi";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -281,6 +282,10 @@ function SearchableDropdown({
 }
 
 export default function NewInstallationPage() {
+  return <InstallationCreateApi />;
+}
+
+function LegacyNewInstallationPage() {
   const router = useRouter();
   const { currentUser } = useAuth();
 

@@ -1,13 +1,26 @@
 "use client";
 
-import React, { ReactNode } from "react";
+import React, { ReactNode, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { AuthProvider } from "@/features/auth/AuthContext";
+import { AuthProvider, useAuth } from "@/features/auth/AuthContext";
 
-export function AppShell({ children }: { children: ReactNode }) {
+function AuthenticatedShell({ children }: { children: ReactNode }) {
+  const isLoginPage = usePathname() === "/login";
+  const router = useRouter();
+  const { isAuthenticated, isSessionLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoginPage && !isSessionLoading && !isAuthenticated) router.replace("/login");
+  }, [isLoginPage, isSessionLoading, isAuthenticated, router]);
+
+  if (isLoginPage) return <>{children}</>;
+  if (isSessionLoading || !isAuthenticated) {
+    return <main className="min-h-screen flex items-center justify-center text-sm text-slate-500" aria-live="polite">Memeriksa sesi...</main>;
+  }
+
   return (
-    <AuthProvider>
       <div className="flex h-screen w-screen overflow-hidden bg-slate-50">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -17,6 +30,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
-    </AuthProvider>
   );
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  return <AuthProvider><AuthenticatedShell>{children}</AuthenticatedShell></AuthProvider>;
 }

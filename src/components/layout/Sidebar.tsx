@@ -39,7 +39,8 @@ const iconMap: Record<string, React.ElementType> = {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { currentUser, switchRole, isSidebarOpen, toggleSidebar } = useAuth();
+  const { currentUser, isAuthenticated, signOut, switchRole, isSidebarOpen, toggleSidebar } = useAuth();
+  const [signOutError, setSignOutError] = React.useState(false);
 
   return (
     <aside
@@ -193,7 +194,7 @@ export function Sidebar() {
 
         {/* Internal Demo Tool: Role Switcher */}
         <div className="p-3 bg-slate-950/60">
-          {isSidebarOpen ? (
+          {!isAuthenticated && (isSidebarOpen ? (
             <div className="space-y-2">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/90">
                 [DEMO ONLY] Role Switcher
@@ -237,12 +238,13 @@ export function Sidebar() {
             >
               ⇄
             </button>
-          )}
+          ))}
 
           {/* Logout Link */}
           <div className="mt-2 pt-2 border-t border-slate-800/80">
-            <Link
-              href="/"
+            {isAuthenticated ? <button
+              type="button"
+              onClick={() => { void signOut().then(() => setSignOutError(false)).catch(() => setSignOutError(true)); }}
               className={cn(
                 "flex items-center gap-2 text-xs text-rose-400 hover:text-rose-300 py-1 px-2 rounded hover:bg-rose-950/30 transition-colors",
                 !isSidebarOpen && "justify-center px-0"
@@ -251,7 +253,8 @@ export function Sidebar() {
             >
               <LogOut className="h-4 w-4 shrink-0" />
               {isSidebarOpen && <span>Keluar / Logout</span>}
-            </Link>
+            </button> : <Link href="/login" className="text-xs text-slate-300 hover:text-white" title="Login">{isSidebarOpen ? "Login" : <User className="h-4 w-4 mx-auto" />}</Link>}
+            {signOutError && <p className="text-xs text-rose-400 mt-1">Gagal keluar. Coba lagi.</p>}
           </div>
         </div>
       </div>

@@ -4,9 +4,10 @@
 Proyek ini adalah **MH02 Asset Report Portal** (Fleet Safety & Telematics Management), berfokus pada pembangunan antarmuka pengguna (UI/UX) fidelitas tinggi menggunakan **Next.js (App Router), TypeScript, dan Tailwind CSS**.
 
 ## 2. Strict Engineering Principles & Constraints
-1. **Frontend-Only Prototype**:
-   - Seluruh data bersifat mock lokal di client-side (in-memory state/React Context).
-   - DILARANG mengintegrasikan backend riil, database produksi, SSO perusahaan, atau API eksternal yang belum dikonfirmasi.
+1. **Frontend dan Backend**:
+   - Frontend dapat menggunakan data mock selama integrasi belum selesai.
+   - Backend .NET ditempatkan di `backend-dotnet/` dan dapat terhubung ke database development yang telah dikonfirmasi pengguna.
+   - DILARANG mengintegrasikan database produksi, SSO perusahaan, atau API eksternal yang belum dikonfirmasi. Kredensial tidak boleh disimpan dalam file yang dilacak Git.
 2. **Pemisahan Fakta vs Asumsi**:
    - DILARANG mengarang alur bisnis, aturan persetujuan (approval) berjenjang, atau kewenangan role tambahan yang tidak ada di dokumen acuan (`Catatan Project MH02.md` dan `ALUR WEB MH02.md`).
    - Group Leader (GL) dicatat hanya sebagai dropdown pelaksana/penanggung jawab, BUKAN sebagai entitas approval fiktif.

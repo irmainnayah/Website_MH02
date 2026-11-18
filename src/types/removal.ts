@@ -12,6 +12,10 @@ export interface RemovalMasterStateSnapshot {
 
 export interface RemovalRecord {
   id: string; // Form Number e.g. REM-202610-001
+  siteId?: number;
+  timeZone?: string;
+  rowVersion?: string;
+  serialNumber?: string;
   deviceId: string;
   unitNo: string;
   equipmentType?: EquipmentType;

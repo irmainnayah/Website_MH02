@@ -1,7 +1,7 @@
 // src/app/operations/replacement/[id]/page.tsx
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -30,9 +30,9 @@ import {
   Pencil,
   Printer,
 } from "lucide-react";
-import { getReplacementById, getEgiByUnit } from "@/lib/mock-data";
 import { ReplacementRecord } from "@/types/replacement";
 import { useAuth } from "@/features/auth/AuthContext";
+import { getReplacement } from "@/lib/replacement-api";
 
 import { formatDateTimeRange } from "@/lib/utils";
 
@@ -41,10 +41,18 @@ export default function ReplacementDetailPage() {
   const params = useParams();
   const rawId = typeof params?.id === "string" ? decodeURIComponent(params.id) : "";
 
-  // Ambil record Replacement berdasarkan ID
-  const record: ReplacementRecord | null = useMemo(() => {
-    if (!rawId) return null;
-    return getReplacementById(rawId) || null;
+  const [record, setRecord] = useState<ReplacementRecord | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    getReplacement(rawId)
+      .then((result) => { if (active) setRecord(result); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Replacement."); })
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
   }, [rawId]);
 
   // Mounted state for createPortal
@@ -88,6 +96,10 @@ export default function ReplacementDetailPage() {
     }
   };
 
+  if (isLoading) {
+    return <div className="mx-auto max-w-4xl py-12 text-center text-sm text-slate-500">Memuat data Replacement...</div>;
+  }
+
   // Not Found State
   if (!record) {
     return (
@@ -98,10 +110,10 @@ export default function ReplacementDetailPage() {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-slate-800">
-              Catatan Replacement Tidak Ditemukan
+              {loadError?.includes("404") ? "Catatan Replacement Tidak Ditemukan" : "Data Replacement Belum Tersedia"}
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-              Dokumen dengan nomor <strong>&quot;{rawId}&quot;</strong> tidak terdaftar dalam catatan sistem SMARTD DISPLAY.
+              {loadError ? `${loadError} ` : "Dokumen dengan nomor "}<strong>&quot;{rawId}&quot;</strong>{loadError ? "" : " tidak terdaftar dalam catatan sistem SMARTD DISPLAY."}
             </p>
           </div>
           <div className="flex items-center justify-center gap-3 pt-2">
@@ -318,7 +330,7 @@ export default function ReplacementDetailPage() {
             </div>
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">EGI (Model Unit)</span>
-              <span className="font-semibold text-blue-700">{record.egi || getEgiByUnit(record.unitNo)}</span>
+              <span className="font-semibold text-blue-700">{record.egi || "—"}</span>
             </div>
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">Source Power</span>

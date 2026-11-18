@@ -3,23 +3,62 @@
 
 import React, { useState, useEffect } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { getDeviceStatusData } from "@/lib/mock-data";
-import { Info } from "lucide-react";
+import { useAuth } from "@/features/auth/AuthContext";
+
+interface StatusCount {
+  key: string;
+  label: string;
+  count: number;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  in_use: "#2563eb",
+  in_stock_rfu: "#16a34a",
+  in_stock_damaged: "#f59e0b",
+  in_stock_ho: "#e11d48",
+};
 
 export default function DeviceStatusChart() {
-  const [isMounted, setIsMounted] = useState(false);
-  const data = getDeviceStatusData();
-  const total = data.reduce((acc, curr) => acc + curr.value, 0);
-  const hoUnit = data.find((d) => d.name === "HO Repair")?.value ?? 4;
+  const { isAuthenticated } = useAuth();
+  const [statuses, setStatuses] = useState<StatusCount[]>([]);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
+    const controller = new AbortController();
+    setState("loading");
+    setStatuses([]);
+    fetch("/api/dotnet/dashboard/status-distribution", { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(response.status === 401 ? "Sesi login diperlukan." : "Data status perangkat tidak tersedia.");
+        return response.json() as Promise<StatusCount[]>;
+      })
+      .then((result) => {
+        setStatuses(result);
+        setState("ready");
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(reason instanceof Error ? reason.message : "Data status perangkat tidak tersedia.");
+        setState("error");
+      });
+    return () => controller.abort();
+  }, [attempt, isAuthenticated]);
 
-  if (!isMounted) {
+  const total = statuses.reduce((sum, status) => sum + status.count, 0);
+  const data = statuses.map((status) => ({
+    name: status.label,
+    value: status.count,
+    color: STATUS_COLORS[status.key] ?? "#64748b",
+    percentage: total ? Math.round((status.count / total) * 100) : 0,
+  }));
+
+  if (state !== "ready") {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[340px] flex items-center justify-center">
-        <span className="text-xs text-slate-400">Memuat grafik status perangkat...</span>
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[340px] flex flex-col items-center justify-center gap-3" aria-live="polite">
+        <span className="text-xs text-slate-500">{state === "loading" ? "Memuat grafik status perangkat..." : error}</span>
+        {state === "error" && <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => setAttempt((value) => value + 1)}>Coba lagi</button>}
       </div>
     );
   }
@@ -31,19 +70,16 @@ export default function DeviceStatusChart() {
           <div>
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               Status Pemasangan Perangkat
-              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                Mock Data
-              </span>
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">Distribusi kondisi fisik {total} unit perangkat</p>
+            <p className="text-xs text-slate-500 mt-0.5">Distribusi status perangkat terdaftar</p>
           </div>
           <span className="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-md border border-blue-100">
-            Total: {total} Unit
+            Terdaftar: {total} Unit
           </span>
         </div>
 
         <div className="h-64 w-full mt-3">
-          <ResponsiveContainer width="100%" height="100%">
+          {total === 0 ? <div className="h-full flex items-center justify-center text-xs text-slate-500">Belum ada perangkat terdaftar.</div> : <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={data}
@@ -79,16 +115,10 @@ export default function DeviceStatusChart() {
                 )}
               />
             </PieChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer>}
         </div>
       </div>
 
-      <div className="mt-3 p-2.5 bg-slate-50 rounded-lg border border-slate-200/70 flex items-start gap-2 text-xs text-slate-600">
-        <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-        <span>
-          <strong className="text-slate-800">Catatan Validasi:</strong> HO Repair ({hoUnit} unit) merupakan sub-kategori dari <em>In Stock</em> dan tidak dihitung ganda pada total inventaris. Total seluruh inventaris: {total} unit.
-        </span>
-      </div>
     </div>
   );
 }

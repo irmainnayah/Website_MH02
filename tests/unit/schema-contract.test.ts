@@ -15,6 +15,18 @@ function allowedValues(migration: string, constraint: string): string[] {
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
+test("PostgreSQL removal later-activity guard follows start/create ordering, not finish time", () => {
+  const service = read("backend-dotnet/RemovalWrites.cs");
+  const guard = /private static async Task CheckLatestAsync\([\s\S]*?(?=private static async Task SetDeviceAsync)/.exec(service)?.[0];
+  assert.ok(guard, "Removal history guard must be present");
+  assert.match(guard, /a\.started_at > @start/);
+  assert.match(guard, /a\.started_at = @start AND a\.created_at > @created/);
+  assert.doesNotMatch(guard, /a\.finished_at/);
+  assert.match(guard, /SELECT a\.form_number, a\.started_at, a\.start_utc_offset_minutes, a\.time_zone_id/);
+  assert.match(guard, /LATER_ACTIVITY_EXISTS/);
+  assert.match(guard, /reader\.GetString\(0\)/);
+});
+
 test("constraint names are extracted from SQL Server messages (names only, never values)", () => {
   assert.equal(
     constraintNameFromMessage('The INSERT statement conflicted with the CHECK constraint "CK_devices_data_source". The conflict occurred in database "db", table "dbo.devices", column \'data_source\'.'),

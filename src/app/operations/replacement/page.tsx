@@ -1,7 +1,7 @@
 // src/app/operations/replacement/page.tsx
 "use client";
 
-import React, { useState, useMemo, useSyncExternalStore, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -25,28 +25,26 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
-import {
-  executeDeviceReplacementDelete,
-  getReplacementById,
-  getReplacementRecords,
-  subscribeToReplacementRecords,
-} from "@/lib/mock-data/replacement";
-import { getEgiByUnit, matchesUnitNumberSearch } from "@/lib/mock-data/fleet";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
 import { ReplacementRecord } from "@/types/replacement";
-import { DistrictName } from "@/types/dashboard";
-import { InstallationShift } from "@/types/installation";
+import { deleteReplacement, getReplacementList } from "@/lib/replacement-api";
 
-const DISTRICTS: DistrictName[] = ["Sangatta", "Bengalon", "Wahau", "Sangatta Utara"];
+const FILTER_COLUMNS = [
+  { key: "id", label: "Form Number" },
+  { key: "newDeviceId", label: "Device ID" },
+  { key: "unitNo", label: "Unit Number" },
+  { key: "equipmentType", label: "Type" },
+  { key: "egi", label: "EGI" },
+  { key: "date", label: "Date" },
+  { key: "technicianName", label: "Technician" },
+] as const;
+type FilterColumn = typeof FILTER_COLUMNS[number]["key"];
 
 export default function ReplacementPage() {
   const { currentUser } = useAuth();
 
-  const replacements = useSyncExternalStore(
-    subscribeToReplacementRecords,
-    getReplacementRecords,
-    getReplacementRecords
-  );
+  const [replacements, setReplacements] = useState<ReplacementRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ReplacementRecord | null>(null);
   const [deleteCountdown, setDeleteCountdown] = useState(0);
@@ -54,6 +52,15 @@ export default function ReplacementPage() {
   const isDeletingRef = useRef(false);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    let active = true;
+    getReplacementList()
+      .then((items) => { if (active) setReplacements(items); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat data Replacement."); })
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!deleteTarget) return;
@@ -95,6 +102,7 @@ export default function ReplacementPage() {
   const [districtFilter, setDistrictFilter] = useState<string>("all");
   const [shiftFilter, setShiftFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterColumn, string>>>({});
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [dateError, setDateError] = useState<string | null>(null);
@@ -115,15 +123,10 @@ export default function ReplacementPage() {
 
   const requestDelete = (record: ReplacementRecord) => {
     if (currentUser.role !== "superadmin" || isDeletingRef.current) return;
-    const latestRecord = getReplacementById(record.id);
-    if (!latestRecord) {
-      showAlert("Laporan Replacement tidak lagi tersedia.", "error");
-      return;
-    }
     isDeletingRef.current = false;
     setIsDeleting(false);
     setDeleteCountdown(5);
-    setDeleteTarget(latestRecord);
+    setDeleteTarget(record);
   };
 
   const cancelDelete = () => {
@@ -132,26 +135,22 @@ export default function ReplacementPage() {
     setDeleteCountdown(0);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (currentUser.role !== "superadmin" || !deleteTarget || deleteCountdown > 0 || isDeletingRef.current) return;
     isDeletingRef.current = true;
     setIsDeleting(true);
-    const result = executeDeviceReplacementDelete(deleteTarget.id, currentUser.role);
-    if (!result.success) {
-      showAlert(result.message, "error");
+    try {
+      await deleteReplacement(deleteTarget.id);
+      setReplacements(await getReplacementList());
+      showAlert(`Laporan ${deleteTarget.id} berhasil dihapus.`, "success");
+    } catch (error) {
+      showAlert(error instanceof Error ? error.message : "Gagal menghapus Replacement.", "error");
+    } finally {
       setDeleteTarget(null);
       setDeleteCountdown(0);
       isDeletingRef.current = false;
       setIsDeleting(false);
-      return;
     }
-
-    recordAuditAction({ table: "replacement", operation: "DELETE", recordId: deleteTarget.id });
-    showAlert(result.message, "success");
-    setDeleteTarget(null);
-    setDeleteCountdown(0);
-    isDeletingRef.current = false;
-    setIsDeleting(false);
   };
 
   // Date handling
@@ -177,13 +176,17 @@ export default function ReplacementPage() {
   // Filtered data
   const filteredReplacements = useMemo(() => {
     return replacements.filter((item) => {
+      for (const column of FILTER_COLUMNS) {
+        const selected = columnFilters[column.key];
+        if (selected && String(item[column.key] ?? "") !== selected) return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchId = item.id.toLowerCase().includes(q);
         const matchOld = item.oldDeviceId.toLowerCase().includes(q) || item.oldDeviceSerialNumber.toLowerCase().includes(q);
         const matchNew = item.newDeviceId.toLowerCase().includes(q) || item.newDeviceSerialNumber?.toLowerCase().includes(q);
-        const matchUnit = matchesUnitNumberSearch(item.unitNo, q) || matchesUnitNumberSearch(item.oldUnitNo, q);
-        const matchEgi = matchesUnitNumberSearch(item.egi || item.oldEgi || getEgiByUnit(item.unitNo), q);
+        const matchUnit = `${item.unitNo} ${item.oldUnitNo}`.toLowerCase().includes(q);
+        const matchEgi = `${item.egi ?? ""} ${item.oldEgi ?? ""}`.toLowerCase().includes(q);
         const matchTech = item.technicianName.toLowerCase().includes(q);
         const matchGl = item.groupLeaderName.toLowerCase().includes(q);
         if (! (matchId || matchOld || matchNew || matchUnit || matchEgi || matchTech || matchGl) ) return false;
@@ -195,7 +198,7 @@ export default function ReplacementPage() {
       if (endDate && item.date > endDate) return false;
       return true;
     });
-  }, [replacements, searchQuery, districtFilter, shiftFilter, statusFilter, startDate, endDate]);
+  }, [replacements, searchQuery, districtFilter, shiftFilter, statusFilter, startDate, endDate, columnFilters]);
 
   const totalItems = filteredReplacements.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -211,6 +214,7 @@ export default function ReplacementPage() {
     districtFilter !== "all" ||
     shiftFilter !== "all" ||
     statusFilter !== "all" ||
+    Object.values(columnFilters).some(Boolean) ||
     startDate !== "" ||
     endDate !== "";
 
@@ -219,6 +223,7 @@ export default function ReplacementPage() {
     setDistrictFilter("all");
     setShiftFilter("all");
     setStatusFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setDateError(null);
@@ -256,7 +261,11 @@ export default function ReplacementPage() {
       r.date,
       r.status,
     ]);
-    const csv = "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+    const csvCell = (value: string) => {
+      const safe = /^[=+@\-\t\r]/.test(value) ? `'${value}` : value;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const csv = "\uFEFF" + [headers.map(csvCell).join(","), ...rows.map((row) => row.map(csvCell).join(","))].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -355,7 +364,7 @@ export default function ReplacementPage() {
                 className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
               >
                 <option value="all">Semua Distrik</option>
-                {DISTRICTS.map((d) => (
+                {Array.from(new Set(replacements.map((item) => item.district))).sort().map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
@@ -368,7 +377,6 @@ export default function ReplacementPage() {
                 <option value="all">Semua Shift</option>
                 <option value="Shift 1">Shift 1</option>
                 <option value="Shift 2">Shift 2</option>
-                <option value="Shift 3">Shift 3</option>
               </select>
               {/* Status */}
               <select
@@ -457,6 +465,28 @@ export default function ReplacementPage() {
                 <th className="py-3 px-4">Technician</th>
                 <th className="py-3 px-4 text-center">Actions</th>
               </tr>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                {FILTER_COLUMNS.map((column) => (
+                  <th key={column.key} className="px-4 pb-2 font-normal">
+                    <select
+                      aria-label={`Filter ${column.label}`}
+                      value={columnFilters[column.key] ?? ""}
+                      onChange={(event) => { setColumnFilters((previous) => ({ ...previous, [column.key]: event.target.value })); setCurrentPage(1); }}
+                      className="w-full max-w-40 rounded border border-slate-200 bg-white px-1 py-1 text-[11px] font-normal text-slate-600"
+                    >
+                      <option value="">Semua</option>
+                      {Array.from(new Set(replacements.map((record) => String(record[column.key] ?? "")))).filter(Boolean).sort().map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                  </th>
+                ))}
+                <th className="px-4 pb-2 text-center">
+                  <button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={handleResetFilters} className="rounded p-1 text-slate-500 hover:bg-slate-200">
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </button>
+                </th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {paginated.length === 0 ? (
@@ -465,8 +495,8 @@ export default function ReplacementPage() {
                     <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
                       <Wrench className="h-6 w-6" />
                     </div>
-                    <p className="text-sm font-semibold text-slate-700">Tidak ada riwayat penggantian</p>
-                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">Gunakan filter lain atau tambahkan data baru.</p>
+                    <p role={loadError ? "alert" : "status"} className="text-sm font-semibold text-slate-700">{isLoading ? "Memuat riwayat penggantian..." : loadError ? "Gagal memuat Replacement" : "Tidak ada riwayat penggantian"}</p>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">{loadError ?? (isLoading ? "" : "Gunakan filter lain atau tambahkan data baru.")}</p>
                     {isFiltered && (
                       <button onClick={handleResetFilters} className="mt-3 px-3 py-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm transition">
                         Reset Filter
@@ -493,7 +523,7 @@ export default function ReplacementPage() {
                     </td>
                     {/* EGI — model code of the unit (e.g. HD785-7) */}
                     <td className="py-3 px-4 whitespace-nowrap text-slate-700 text-[11px]">
-                      {item.egi || item.oldEgi || getEgiByUnit(item.unitNo) || "—"}
+                      {item.egi || item.oldEgi || "—"}
                     </td>
                     {/* Date */}
                     <td className="py-3 px-4 whitespace-nowrap">

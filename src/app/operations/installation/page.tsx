@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useRef, useSyncExternalStore } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -26,52 +26,47 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
-import {
-  devices as allDevices,
-  getInstallationRecords,
-  subscribeToInstallationRecords,
-  executeDeviceInstallationDelete,
-  getInstallationById,
-  matchesUnitNumberSearch,
-} from "@/lib/mock-data";
-import { InstallationRecord } from "@/types/installation";
-import { DistrictName, EquipmentType, DeviceRecord } from "@/types/dashboard";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
+import { matchesUnitNumberSearch } from "@/lib/utils";
+import { InstallationRecord, InstallationShift, SourcePowerType } from "@/types/installation";
+import { DistrictName, EquipmentType } from "@/types/dashboard";
 
-const EQUIPMENT_TYPES: EquipmentType[] = [
-  "Dump Truck",
-  "Water Truck",
-  "Fuel Truck",
-  "Loader",
-  "Others",
-];
+interface InstallationListItem {
+  activityId: string;
+  formNumber: string;
+  siteName: string;
+  unitNo: string | null;
+  startedAt: string;
+  finishedAt: string;
+  durationMinutes: number;
+  technicianName: string | null;
+  deviceCodes: string[];
+  timeZone: string;
+  equipmentType?: string | null;
+  serialNumber?: string | null;
+  technicianNrp?: string | null;
+  groupLeader?: string | null;
+  shift?: InstallationShift | null;
+  remarks?: string | null;
+  createdAt?: string;
+  details?: { egi?: string | null; area?: string | null; location_detail?: string | null; ip_address?: string | null; ip_cpe?: string | null; ip_vhms?: string | null; source_power?: SourcePowerType | null; spm_version?: string | null; notes?: string | null };
+}
 
-const DISTRICTS: DistrictName[] = [
-  "Sangatta",
-  "Bengalon",
-  "Wahau",
-  "Sangatta Utara",
-];
+interface InstallationPageResult { items: InstallationListItem[]; total: number }
+type DisplayInstallation = InstallationRecord & { activityId: string; timeZone: string };
 
 export default function InstallationPage() {
   const { currentUser } = useAuth();
 
-  // In-memory Master Installation Records with reactive external store
-  const installations = useSyncExternalStore(
-    subscribeToInstallationRecords,
-    getInstallationRecords,
-    getInstallationRecords
-  );
-
-  // Available devices snapshot (RFU / Not Installed)
-  const [deviceList, setDeviceList] = useState<DeviceRecord[]>([
-    ...allDevices,
-  ]);
+  const [installations, setInstallations] = useState<DisplayInstallation[]>([]);
+  const [rfuCount, setRfuCount] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [refresh, setRefresh] = useState(0);
 
   const [mounted, setMounted] = useState(false);
 
   // Delete State & RBAC 5-Second Countdown
-  const [deleteTarget, setDeleteTarget] = useState<InstallationRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DisplayInstallation | null>(null);
   const [deleteCountdown, setDeleteCountdown] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const isDeletingRef = useRef(false);
@@ -94,26 +89,71 @@ export default function InstallationPage() {
 
   useEffect(() => {
     setMounted(true);
-    setDeviceList([...allDevices]);
-
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("success") === "true") {
-        const docId = params.get("doc") || "Pemasangan Baru";
-        const unit = params.get("unit") || "";
-        const dev = params.get("dev") || "";
-        showAlert(
-          `Formulir ${docId} berhasil disimpan! Status perangkat ${dev} kini aktif (In Use) pada unit ${unit}.`,
-          "success"
-        );
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname
-        );
-      }
-    }
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async () => {
+      setLoading(true);
+      setLoadError("");
+      try {
+        const all: InstallationListItem[] = [];
+        let page = 1;
+        let total: number;
+        do {
+          const response = await fetch(`/api/dotnet/installations?page=${page}&pageSize=100`, { signal: controller.signal, cache: "no-store" });
+          if (!response.ok) throw new Error("Data instalasi tidak dapat dimuat. Periksa API backend dan sesi login.");
+          const result: InstallationPageResult = await response.json();
+          if (!Array.isArray(result.items) || !Number.isSafeInteger(result.total) || result.total < 0) throw new Error("Respons data instalasi tidak valid.");
+          all.push(...result.items);
+          total = result.total;
+          if (result.items.length === 0 && all.length < total) throw new Error("Data instalasi belum dapat dimuat seluruhnya.");
+          page++;
+        } while (all.length < total);
+        if (controller.signal.aborted) return;
+        setInstallations(all.map((item) => {
+          const hours = Math.floor(item.durationMinutes / 60);
+          const minutes = item.durationMinutes % 60;
+          return {
+            activityId: item.activityId, id: item.formNumber, date: item.startedAt.slice(0, 10),
+            startTime: item.startedAt.slice(11, 16), endTime: item.finishedAt.slice(11, 16),
+            durationMinutes: item.durationMinutes, durationFormatted: `${hours} Jam ${minutes} Menit`,
+            deviceId: item.deviceCodes.join(", "), serialNumber: item.serialNumber ?? "", unitNo: item.unitNo ?? "",
+            equipmentType: (item.equipmentType ?? "") as EquipmentType, district: item.siteName as DistrictName,
+            egi: item.details?.egi ?? undefined, area: item.details?.area ?? undefined,
+            locationDetail: item.details?.location_detail ?? "", ipAddress: item.details?.ip_address ?? undefined,
+            ipCpe: item.details?.ip_cpe ?? undefined, ipVhms: item.details?.ip_vhms ?? undefined,
+            sourcePower: item.details?.source_power ?? undefined, spmVersion: item.details?.spm_version ?? undefined,
+            notes: item.details?.notes ?? undefined, shift: item.shift ?? undefined, remarks: item.remarks ?? undefined,
+            technicianName: item.technicianName ?? "", technicianNrp: item.technicianNrp ?? "", groupLeaderName: item.groupLeader ?? "",
+            status: "completed", photos: [], createdAt: item.createdAt ?? "", timeZone: item.timeZone,
+          };
+        }));
+      } catch (reason) {
+        if (!controller.signal.aborted) {
+          setInstallations([]);
+          setLoadError(reason instanceof Error ? reason.message : "Data instalasi tidak dapat dimuat.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+    const loadRfu = async () => {
+      setRfuCount(null);
+      try {
+        const response = await fetch("/api/dotnet/devices?purpose=installable&page=1&pageSize=1", { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error("unavailable");
+        const result: { total: number } = await response.json();
+        if (!Number.isSafeInteger(result.total) || result.total < 0) throw new Error("invalid");
+        if (!controller.signal.aborted) setRfuCount(result.total);
+      } catch {
+        if (!controller.signal.aborted) setRfuCount(null);
+      }
+    };
+    void load();
+    void loadRfu();
+    return () => controller.abort();
+  }, [refresh]);
 
   // Countdown timer for Delete
   useEffect(() => {
@@ -149,10 +189,9 @@ export default function InstallationPage() {
     };
   }, [deleteTarget]);
 
-  const requestDelete = (record: InstallationRecord) => {
+  const requestDelete = (record: DisplayInstallation) => {
     if (currentUser.role !== "superadmin" || isDeletingRef.current) return;
-    const latest = getInstallationById(record.id) || record;
-    setDeleteTarget(latest);
+    setDeleteTarget(record);
     setDeleteCountdown(5);
   };
 
@@ -162,27 +201,27 @@ export default function InstallationPage() {
     setDeleteCountdown(0);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (currentUser.role !== "superadmin" || !deleteTarget || deleteCountdown > 0 || isDeletingRef.current) return;
     isDeletingRef.current = true;
     setIsDeleting(true);
 
-    const result = executeDeviceInstallationDelete(deleteTarget.id, currentUser.role);
-    if (!result.success) {
-      showAlert(result.message, "error");
+    try {
+      const response = await fetch(`/api/dotnet/installations/${encodeURIComponent(deleteTarget.activityId)}`, { method: "DELETE" });
+      if (!response.ok) {
+        const body: { error?: { message?: string } } | null = await response.json().catch(() => null);
+        throw new Error(body?.error?.message ?? "Gagal menghapus instalasi.");
+      }
+      showAlert("Instalasi berhasil dihapus.", "success");
+      setRefresh((value) => value + 1);
+    } catch (reason) {
+      showAlert(reason instanceof Error ? reason.message : "Gagal menghapus instalasi.", "error");
+    } finally {
       setDeleteTarget(null);
       setDeleteCountdown(0);
       isDeletingRef.current = false;
       setIsDeleting(false);
-      return;
     }
-
-    recordAuditAction({ table: "installation", operation: "DELETE", recordId: deleteTarget.id });
-    showAlert(result.message, "success");
-    setDeleteTarget(null);
-    setDeleteCountdown(0);
-    isDeletingRef.current = false;
-    setIsDeleting(false);
   };
 
   // Filter & Search State
@@ -221,19 +260,21 @@ export default function InstallationPage() {
     }
   };
 
-  // Available RFU devices count
-  const rfuCount = useMemo(() => {
-    return deviceList.filter(
-      (d) => d.status === "in_stock_rfu"
-    ).length;
-  }, [deviceList]);
-
   // Metrics Summary
   const metrics = useMemo(() => {
     const total = installations.length;
-    const thisMonth = installations.filter((i) =>
-      i.date.startsWith("2026-10")
-    ).length;
+    const now = new Date();
+    const months = new Map<string, string>();
+    const thisMonth = installations.filter((item) => {
+      const zone = item.timeZone || "UTC";
+      if (!months.has(zone)) {
+        try {
+          const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "2-digit" }).formatToParts(now);
+          months.set(zone, `${parts.find((part) => part.type === "year")?.value}-${parts.find((part) => part.type === "month")?.value}`);
+        } catch { months.set(zone, ""); }
+      }
+      return item.date.startsWith(months.get(zone) || "no-match");
+    }).length;
     const avgDurationMin =
       total > 0
         ? Math.round(
@@ -247,6 +288,9 @@ export default function InstallationPage() {
 
     return { total, thisMonth, avgDurationStr, rfuCount };
   }, [installations, rfuCount]);
+
+  const districts = useMemo(() => Array.from(new Set(installations.map((item) => item.district).filter(Boolean))).sort(), [installations]);
+  const equipmentTypes = useMemo(() => Array.from(new Set(installations.map((item) => item.equipmentType).filter(Boolean))).sort(), [installations]);
 
   // Filtered Installation Records
   const filteredInstallations = useMemo(() => {
@@ -394,31 +438,36 @@ export default function InstallationPage() {
       i.deviceId,
       i.serialNumber,
       i.unitNo,
-      `"${i.equipmentType}"`,
+      i.equipmentType,
       i.district,
-      `"${(i.area || "-").replace(/"/g, '""')}"`,
-      `"${(i.locationDetail || "-").replace(/"/g, '""')}"`,
+      i.area || "-",
+      i.locationDetail || "-",
       i.ipAddress || "-",
       i.ipCpe || "-",
       i.ipVhms || "-",
       i.shift || "-",
-      `"${i.sourcePower || "-"}"`,
+      i.sourcePower || "-",
       i.spmVersion || "-",
       i.date,
       i.startTime,
       i.endTime,
-      `"${i.durationFormatted}"`,
-      `"${i.technicianName.replace(/"/g, '""')}"`,
+      i.durationFormatted,
+      i.technicianName,
       i.technicianNrp,
-      `"${i.groupLeaderName.replace(/"/g, '""')}"`,
+      i.groupLeaderName,
       i.status === "completed" ? "Selesai" : "Dalam Pengerjaan",
-      `"${(i.remarks || i.notes || "").replace(/"/g, '""')}"`,
+      i.remarks || i.notes || "",
     ]);
+
+    const csvCell = (value: string) => {
+      const safe = /^[\s]*[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
 
     // UTF-8 BOM prefix (\uFEFF) for Microsoft Excel compatibility
     const csvContent =
       "\uFEFF" +
-      [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+      [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
 
     const blob = new Blob([csvContent], {
       type: "text/csv;charset=utf-8;",
@@ -521,7 +570,7 @@ export default function InstallationPage() {
           <div>
             <p className="text-xs font-medium text-slate-500">Total Instalasi</p>
             <p className="text-2xl font-bold text-slate-800 mt-1">
-              {metrics.total}
+              {loading || loadError ? "—" : metrics.total}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
               Seluruh unit terpasang
@@ -538,10 +587,10 @@ export default function InstallationPage() {
               Instalasi Bulan Ini
             </p>
             <p className="text-2xl font-bold text-emerald-600 mt-1">
-              {metrics.thisMonth}
+              {loading || loadError ? "—" : metrics.thisMonth}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Periode Oktober 2026
+              Periode bulan berjalan
             </p>
           </div>
           <div className="h-11 w-11 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
@@ -555,7 +604,7 @@ export default function InstallationPage() {
               Rata-rata Durasi
             </p>
             <p className="text-2xl font-bold text-slate-800 mt-1">
-              {metrics.avgDurationStr}
+              {loading || loadError ? "—" : metrics.avgDurationStr}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
               Waktu pengerjaan teknisi
@@ -572,7 +621,7 @@ export default function InstallationPage() {
               Perangkat Siap Pasang
             </p>
             <p className="text-2xl font-bold text-amber-600 mt-1">
-              {metrics.rfuCount}
+              {metrics.rfuCount ?? "—"}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
               Stok RFU &amp; Belum Pasang
@@ -629,7 +678,7 @@ export default function InstallationPage() {
                 className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
               >
                 <option value="all">Semua Distrik</option>
-                {DISTRICTS.map((d) => (
+                {districts.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
@@ -646,7 +695,7 @@ export default function InstallationPage() {
                 className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
               >
                 <option value="all">Semua Tipe Alat</option>
-                {EQUIPMENT_TYPES.map((t) => (
+                {equipmentTypes.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -735,7 +784,7 @@ export default function InstallationPage() {
               <button
                 type="button"
                 onClick={handleExportCSV}
-                disabled={!!dateError || filteredInstallations.length === 0}
+                disabled={loading || !!loadError || !!dateError || filteredInstallations.length === 0}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 title="Ekspor data tabel ke CSV berdasarkan filter aktif"
               >
@@ -770,7 +819,9 @@ export default function InstallationPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {paginatedInstallations.length === 0 ? (
+              {loading || loadError ? (
+                <tr><td colSpan={8} className="py-12 text-center text-sm text-slate-600" role={loadError ? "alert" : "status"}>{loadError || "Memuat data instalasi..."}{loadError && <button type="button" onClick={() => setRefresh((value) => value + 1)} className="block mx-auto mt-3 text-xs font-semibold text-blue-700">Coba lagi</button>}</td></tr>
+              ) : paginatedInstallations.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center">
                     <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
@@ -872,11 +923,9 @@ export default function InstallationPage() {
                     {/* 8. Actions (Detail & Delete) */}
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       <Link
-                        href={`/operations/installation/${encodeURIComponent(
-                          item.id
-                        )}`}
+                        href={`/operations/installation/${encodeURIComponent(item.activityId)}`}
                         className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition text-slate-600"
-                        title={`Buka rincian lengkap formulir pemasangan ${item.id}`}
+                        title={`Buka rincian formulir ${item.id}`}
                       >
                         <Eye className="h-3.5 w-3.5" />
                         <span>Detail</span>

@@ -26,6 +26,9 @@ export interface ReplacementMasterStateSnapshot {
 
 export interface ReplacementRecord {
   id: string; // e.g. "REP-202610-001"
+  siteId?: number;
+  timeZone?: string;
+  rowVersion?: string;
   activityType: "Replacement";
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm

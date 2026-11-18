@@ -133,30 +133,5 @@ export function getEgiByUnit(unitNo: string | null | undefined): string {
   return `DUMMY-EGI-${clean.replace(/[^A-Z0-9]/g, "-")}`;
 }
 
-/**
- * Helper pencarian Unit Number yang akurat:
- * - Menjaga urutan karakter (FT102 !== TF102)
- * - Mengabaikan tanda hubung dan spasi sehingga "FT102" cocok dengan "FT-102"
- * - Tidak menggunakan fuzzy-matching yang membuat unit berbeda tertukar
- */
-export function matchesUnitNumberSearch(unitNo: string, query: string): boolean {
-  if (!query || !query.trim()) return true;
-  if (!unitNo) return false;
-
-  const q = query.trim().toUpperCase();
-  const u = unitNo.trim().toUpperCase();
-
-  // 1. Direct substring match (case-insensitive)
-  if (u.includes(q)) return true;
-
-  // 2. Alphanumeric normalized comparison (FT102 -> FT-102)
-  const qClean = q.replace(/[^A-Z0-9]/g, "");
-  const uClean = u.replace(/[^A-Z0-9]/g, "");
-
-  if (qClean.length > 0 && uClean.includes(qClean)) {
-    return true;
-  }
-
-  return false;
-}
+export { matchesUnitNumberSearch } from "@/lib/utils";
 

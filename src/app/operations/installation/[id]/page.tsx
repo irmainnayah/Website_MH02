@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
+import InstallationDetailApi from "@/components/operations/InstallationDetailApi";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -35,6 +36,10 @@ import { useAuth } from "@/features/auth/AuthContext";
 import { formatDateTimeRange } from "@/lib/utils";
 
 export default function InstallationDetailPage() {
+  return <InstallationDetailApi />;
+}
+
+function LegacyInstallationDetailPage() {
   const { currentUser } = useAuth();
   const params = useParams();
 

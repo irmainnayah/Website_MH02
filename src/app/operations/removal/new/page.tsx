@@ -23,25 +23,9 @@ import {
   Upload,
   Eye,
 } from "lucide-react";
-import {
-  devices as allDevices,
-  GROUP_LEADERS,
-  TECHNICIANS,
-  getEquipmentTypeByUnit,
-  getEgiByUnit,
-  getFleetMasterByUnit,
-  matchesUnitNumberSearch,
-} from "@/lib/mock-data";
-import {
-  getNextRemovalFormNumber,
-  executeDeviceRemoval,
-  executeDeviceRemovalEdit,
-  getRemovalById,
-  REMOVAL_DEVICE_CONDITIONS,
-} from "@/lib/mock-data/removal";
+import { getRemoval, getRemovalFormOptions, saveRemoval, RemovalDevice, RemovalLookup, RemovalSite } from "@/lib/removal-api";
 import { RemovalRecord, DeviceFinalCondition } from "@/types/removal";
-import { DistrictName, DeviceRecord } from "@/types/dashboard";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
+import { DistrictName } from "@/types/dashboard";
 import { useAuth } from "@/features/auth/AuthContext";
 import {
   calculateWorkDuration,
@@ -110,7 +94,7 @@ function SearchableDropdown({
   const filteredOptions = options.filter((option) => {
     if (!query.trim()) return true;
     if (id.includes("unit") || id.includes("unit-no")) {
-      return matchesUnitNumberSearch(option.value, query) || matchesUnitNumberSearch(option.label, query);
+      return `${option.value} ${option.label}`.toLowerCase().includes(query.trim().toLowerCase());
     }
     return `${option.label} ${option.value}`.toLowerCase().includes(query.trim().toLowerCase());
   });
@@ -282,7 +266,14 @@ function RemovalFormContent() {
     componentSet: useRef<HTMLInputElement>(null),
   };
 
-  const [devices] = useState<DeviceRecord[]>([...allDevices]);
+  const [devices, setDevices] = useState<RemovalDevice[]>([]);
+  const [lookups, setLookups] = useState<RemovalLookup[]>([]);
+  const [sites, setSites] = useState<RemovalSite[]>([]);
+  const [conditions, setConditions] = useState<{ code: string; label: string | null }[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [editLoading, setEditLoading] = useState(isEditMode);
+  const idempotencyKeyRef = useRef<string | null>(null);
   const installedDevices = useMemo(
     () => devices.filter((d) => d.status === "in_use"),
     [devices]
@@ -325,11 +316,32 @@ function RemovalFormContent() {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    getRemovalFormOptions().then((result) => {
+      if (!active) return;
+      setDevices(result.devices);
+      setLookups(result.lookups);
+      setSites(result.sites);
+      setConditions(result.deviceStatuses.filter((status) => ["in_stock_rfu", "in_stock_damaged", "in_stock_ho"].includes(status.code)));
+    }).catch((error: unknown) => {
+      if (active) setOptionsError(error instanceof Error ? error.message : "Gagal memuat data dropdown.");
+    }).finally(() => { if (active) setOptionsLoading(false); });
+    return () => { active = false; };
+  }, []);
+
   // Initialize Edit Mode or Create Mode
   useEffect(() => {
+    let active = true;
     if (isEditMode && editId) {
-      const rec = getRemovalById(editId);
-      if (rec) {
+      if (currentUser.role !== "superadmin") {
+        setOptionsError("Hanya Superadmin yang dapat mengedit laporan Removal.");
+        setEditLoading(false);
+        return;
+      }
+      setEditLoading(true);
+      getRemoval(editId).then((rec) => {
+        if (!active) return;
         setExistingRecord(rec);
         setFormNumber(rec.id);
         setFormData({
@@ -356,17 +368,15 @@ function RemovalFormContent() {
           beforeDevice: rec.photos?.beforeDeviceCaption || "",
           componentSet: rec.photos?.componentSetCaption || "",
         });
-      } else {
-        setAlertMessage({
-          type: "error",
-          text: `Dokumen ${editId} tidak ditemukan.`,
-        });
-      }
+      }).catch((error: unknown) => {
+        if (active) setOptionsError(error instanceof Error ? error.message : `Dokumen ${editId} tidak ditemukan.`);
+      }).finally(() => { if (active) setEditLoading(false); });
     } else {
-      const today = new Date().toISOString().split("T")[0];
-      setFormNumber(getNextRemovalFormNumber(today));
+      setFormNumber("Dibuat saat disimpan");
+      setFormData((previous) => ({ ...previous, technicianName: currentUser.name, technicianNrp: currentUser.nrp }));
     }
-  }, [isEditMode, editId]);
+    return () => { active = false; };
+  }, [isEditMode, editId, currentUser.role, currentUser.name, currentUser.nrp]);
 
   // Keyboard shortcut: close lightbox or edit modal on Escape key
   useEffect(() => {
@@ -393,11 +403,10 @@ function RemovalFormContent() {
   };
 
   const handleTechnicianChange = (techName: string) => {
-    const matched = TECHNICIANS.find((t) => t.name === techName);
     setFormData((prev) => ({
       ...prev,
-      technicianName: techName,
-      technicianNrp: matched?.nrp || "",
+      technicianName: currentUser.name,
+      technicianNrp: currentUser.nrp,
     }));
   };
 
@@ -413,8 +422,8 @@ function RemovalFormContent() {
   ) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (!file.type.startsWith("image/")) {
-        setAlertMessage({ type: "error", text: "Pilih file gambar valid (PNG, JPG)." });
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size === 0) {
+        setAlertMessage({ type: "error", text: "Pilih foto JPEG, PNG, atau WebP yang tidak kosong." });
         return;
       }
       if (file.size > 5 * 1024 * 1024) {
@@ -568,11 +577,15 @@ function RemovalFormContent() {
     return changes;
   }, [isEditMode, existingRecord, pendingProposedRecord]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
     const errors: Record<string, string> = {};
+    if (optionsLoading || editLoading || optionsError || (isEditMode && !existingRecord)) {
+      errors.loading = optionsError ?? "Data formulir belum siap. Tunggu hingga data selesai dimuat.";
+    }
+    if (!formData.shift) errors.shift = "Pilih shift operasional.";
 
     if (!formData.deviceId) errors.deviceId = "Pilih perangkat yang akan dilepas.";
     if (!formData.activityDate) errors.activityDate = "Tanggal aktivitas wajib diisi.";
@@ -585,6 +598,13 @@ function RemovalFormContent() {
       errors.time = "Start Date & Time dan Finish Date & Time wajib diisi.";
     } else if (!durationResult.isValid) {
       errors.time = durationResult.formatted;
+    }
+    const timeZone = existingRecord?.timeZone ?? sites.find((site) => site.siteId === devices.find((device) => device.deviceId === formData.deviceId)?.siteId)?.timeZone;
+    if (timeZone && formData.endTime) {
+      const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(Date.now() + 120000));
+      const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      const latest = `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+      if (formData.endTime > latest) errors.time = "Waktu selesai tidak boleh di masa depan menurut zona waktu Site.";
     }
     if (!formData.technicianName.trim()) {
       errors.technicianName = "Pilih nama teknisi pelaksana.";
@@ -609,24 +629,24 @@ function RemovalFormContent() {
 
     setFormErrors({});
 
-    const conditionMeta = REMOVAL_DEVICE_CONDITIONS.find(
-      (c) => c.value === formData.deviceFinalCondition
-    );
+    const conditionMeta = conditions.find((condition) => condition.code === formData.deviceFinalCondition);
 
     const targetUnitNo = formData.unitNo.trim().toUpperCase();
-    const targetMaster = getFleetMasterByUnit(targetUnitNo);
-    const targetEquipType = targetMaster?.equipmentType;
-    const targetEgi = targetMaster?.egi ?? "";
+    const targetMaster = devices.find((device) => device.deviceId === formData.deviceId);
+    const targetEquipType = existingRecord?.equipmentType ?? targetMaster?.equipmentType ?? undefined;
+    const targetEgi = existingRecord?.egi ?? targetMaster?.egi ?? "";
 
     const proposedRecord: RemovalRecord = {
+      ...existingRecord,
       id: formNumber,
+      siteId: existingRecord?.siteId ?? targetMaster?.siteId,
       deviceId: formData.deviceId,
       unitNo: targetUnitNo,
       equipmentType: targetEquipType,
       egi: targetEgi,
       reason: formData.reason,
       reasonDetail: formData.reasonDetail.trim() || undefined,
-      removalDate: formData.activityDate,
+      removalDate: formData.startTime.slice(0, 10),
       technicianName: formData.technicianName,
       technicianNrp: formData.technicianNrp || undefined,
       district: formData.district,
@@ -635,7 +655,7 @@ function RemovalFormContent() {
       endTime: formData.endTime,
       durationMinutes: durationResult.minutes,
       deviceFinalCondition: formData.deviceFinalCondition as DeviceFinalCondition,
-      deviceFinalConditionLabel: conditionMeta?.label,
+      deviceFinalConditionLabel: conditionMeta?.label ?? formData.deviceFinalCondition,
       photos: {
         beforeDevice: formData.photos.beforeDevice || undefined,
         componentSet: formData.photos.componentSet || undefined,
@@ -680,31 +700,31 @@ function RemovalFormContent() {
 
     // CREATE MODE: Execute transaction
     setIsSubmitting(true);
-    const result = executeDeviceRemoval(proposedRecord);
-
-    if (result.success) {
-      recordAuditAction({
-        table: "removal",
-        operation: "INSERT",
-        recordId: proposedRecord.id,
-      });
+    try {
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = sessionStorage.getItem("mh02-removal-key") ?? crypto.randomUUID();
+        sessionStorage.setItem("mh02-removal-key", idempotencyKeyRef.current);
+      }
+      const result = await saveRemoval(proposedRecord, { edit: false, key: idempotencyKeyRef.current });
+      sessionStorage.removeItem("mh02-removal-key");
+      idempotencyKeyRef.current = null;
       setIsSubmitting(false);
       setSuccessModal({
-        id: proposedRecord.id,
+        id: result.formNumber,
         unitNo: proposedRecord.unitNo,
         deviceId: proposedRecord.deviceId,
       });
-    } else {
+    } catch (error) {
       setIsSubmitting(false);
       setAlertMessage({
         type: "error",
-        text: result.message,
+        text: error instanceof Error ? error.message : "Gagal menyimpan Removal.",
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
 
-  const handleConfirmEdit = () => {
+  const handleConfirmEdit = async () => {
     if (!pendingProposedRecord || isSubmitting) return;
 
     if (editFieldChanges.length === 0) {
@@ -714,18 +734,8 @@ function RemovalFormContent() {
     }
 
     setIsSubmitting(true);
-    const result = executeDeviceRemovalEdit(
-      pendingProposedRecord.id,
-      pendingProposedRecord,
-      currentUser.role
-    );
-
-    if (result.success) {
-      recordAuditAction({
-        table: "removal",
-        operation: "UPDATE",
-        recordId: pendingProposedRecord.id,
-      });
+    try {
+      await saveRemoval(pendingProposedRecord, { edit: true });
       setShowDiffModal(false);
       setAlertMessage({
         type: "success",
@@ -734,12 +744,12 @@ function RemovalFormContent() {
       setTimeout(() => {
         router.push(`/operations/removal/${encodeURIComponent(pendingProposedRecord.id)}?updated=true`);
       }, 1000);
-    } else {
+    } catch (error) {
       setIsSubmitting(false);
       setShowDiffModal(false);
       setAlertMessage({
         type: "error",
-        text: result.message,
+        text: error instanceof Error ? error.message : "Gagal mengedit Removal.",
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -761,23 +771,10 @@ function RemovalFormContent() {
     }));
   }, [isEditMode, existingRecord, installedDevices]);
 
-  const technicianOptions: SearchableOption[] = useMemo(
-    () =>
-      TECHNICIANS.map((tech) => ({
-        value: tech.name,
-        label: `${tech.name} (${tech.nrp})`,
-      })),
-    []
-  );
-
-  const groupLeaderOptions: SearchableOption[] = useMemo(
-    () =>
-      GROUP_LEADERS.map((gl) => ({
-        value: gl,
-        label: gl,
-      })),
-    []
-  );
+  const selectedDevice = devices.find((device) => device.deviceId === formData.deviceId);
+  const selectedSiteId = existingRecord?.siteId ?? selectedDevice?.siteId;
+  const technicianOptions: SearchableOption[] = [{ value: formData.technicianName, label: `${formData.technicianName} (${formData.technicianNrp})` }];
+  const groupLeaderOptions: SearchableOption[] = Array.from(new Set(lookups.filter((lookup) => lookup.category === "group_leader" && (lookup.siteId === null || lookup.siteId === selectedSiteId)).map((lookup) => lookup.label))).map((label) => ({ value: label, label }));
 
   const reasonOptions: SearchableOption[] = useMemo(
     () =>
@@ -788,14 +785,7 @@ function RemovalFormContent() {
     []
   );
 
-  const conditionOptions: SearchableOption[] = useMemo(
-    () =>
-      REMOVAL_DEVICE_CONDITIONS.map((c) => ({
-        value: c.value,
-        label: c.label,
-      })),
-    []
-  );
+  const conditionOptions: SearchableOption[] = conditions.map((condition) => ({ value: condition.code, label: condition.label ?? condition.code }));
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
@@ -902,7 +892,16 @@ function RemovalFormContent() {
       )}
 
       {/* Main Form */}
+      {(optionsLoading || editLoading || optionsError) && (
+        <div role={optionsError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${optionsError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+          {optionsError ?? "Memuat data formulir Removal..."}
+        </div>
+      )}
+      {!optionsLoading && !optionsError && !isEditMode && installedDevices.length === 0 && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Tidak ada perangkat In Use pada Site yang dapat diakses akun ini.</div>
+      )}
       <form onSubmit={handleSubmit} className="space-y-6">
+        <fieldset disabled={optionsLoading || editLoading || Boolean(optionsError) || isSubmitting} className="space-y-6 min-w-0">
         {/* SECTION 1: Informasi Dokumen & Waktu */}
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
@@ -938,6 +937,7 @@ function RemovalFormContent() {
               <input
                 type="date"
                 value={formData.activityDate}
+                readOnly
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, activityDate: e.target.value }))
                 }
@@ -998,7 +998,7 @@ function RemovalFormContent() {
               </label>
               <input
                 type="text"
-                value={getFleetMasterByUnit(formData.unitNo)?.equipmentType ?? ""}
+                value={existingRecord?.equipmentType ?? selectedDevice?.equipmentType ?? ""}
                 readOnly
                 placeholder="Otomatis mengikuti unit"
                 className="w-full px-3 py-2 text-xs bg-slate-100 border border-slate-200 rounded-lg text-slate-800 font-semibold cursor-not-allowed"
@@ -1012,7 +1012,7 @@ function RemovalFormContent() {
               </label>
               <input
                 type="text"
-                value={getFleetMasterByUnit(formData.unitNo)?.egi ?? ""}
+                value={existingRecord?.egi ?? selectedDevice?.egi ?? ""}
                 readOnly
                 placeholder="Otomatis mengikuti unit"
                 className="w-full px-3 py-2 text-xs bg-slate-100 border border-slate-200 rounded-lg text-slate-800 font-semibold cursor-not-allowed"
@@ -1048,8 +1048,9 @@ function RemovalFormContent() {
                 className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Pilih Shift --</option>
-                <option value="Shift 1">Shift 1 (Pagi/Siang)</option>
-                <option value="Shift 2">Shift 2 (Malam)</option>
+                {Array.from(new Set(lookups.filter((lookup) => lookup.category === "shift" && (lookup.siteId === null || lookup.siteId === selectedSiteId)).map((lookup) => lookup.label))).map((shift) => (
+                  <option key={shift} value={shift}>{shift}</option>
+                ))}
               </select>
             </div>
 
@@ -1161,6 +1162,7 @@ function RemovalFormContent() {
               </label>
               <SearchableDropdown
                 id="removal-tech-select"
+                disabled
                 value={formData.technicianName}
                 options={technicianOptions}
                 placeholder="Pilih Teknisi..."
@@ -1182,7 +1184,7 @@ function RemovalFormContent() {
                   setFormData((prev) => ({
                     ...prev,
                     startTime: val,
-                    ...(val && !prev.activityDate ? { activityDate: val.slice(0, 10) } : {}),
+                    ...(val ? { activityDate: val.slice(0, 10) } : {}),
                   }));
                 }}
                 className={`w-full px-3 py-2 text-xs bg-white border rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 ${formErrors.time ? "border-rose-300 bg-rose-50/50" : "border-slate-200"}`}
@@ -1395,6 +1397,7 @@ function RemovalFormContent() {
             </button>
           </div>
         </div>
+        </fieldset>
       </form>
 
       {/* Success Confirmation Modal */}

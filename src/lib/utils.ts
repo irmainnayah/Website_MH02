@@ -5,6 +5,17 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function matchesUnitNumberSearch(unitNo: string, query: string): boolean {
+  if (!query || !query.trim()) return true;
+  if (!unitNo) return false;
+  const search = query.trim().toUpperCase();
+  const unit = unitNo.trim().toUpperCase();
+  if (unit.includes(search)) return true;
+  const normalizedSearch = search.replace(/[^A-Z0-9]/g, "");
+  const normalizedUnit = unit.replace(/[^A-Z0-9]/g, "");
+  return normalizedSearch.length > 0 && normalizedUnit.includes(normalizedSearch);
+}
+
 /**
  * Converts a stored minute-based duration into a readable Indonesian format.
  * Returns "—" when the value is null, undefined, or zero.

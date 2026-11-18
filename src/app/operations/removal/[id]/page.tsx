@@ -1,7 +1,7 @@
 // src/app/operations/removal/[id]/page.tsx
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -25,8 +25,7 @@ import {
   Pencil,
   ArrowUpRight,
 } from "lucide-react";
-import { getRemovalById } from "@/lib/mock-data/removal";
-import { getEquipmentTypeByUnit, getEgiByUnit } from "@/lib/mock-data/fleet";
+import { getRemoval } from "@/lib/removal-api";
 import { RemovalRecord } from "@/types/removal";
 import { formatDateTimeRange, formatDuration } from "@/lib/utils";
 import { useAuth } from "@/features/auth/AuthContext";
@@ -39,10 +38,18 @@ export default function RemovalDetailPage() {
   const docId =
     typeof params?.id === "string" ? decodeURIComponent(params.id) : "";
 
-  // Find corresponding RemovalRecord
-  const record: RemovalRecord | null = useMemo(() => {
-    if (!docId) return null;
-    return getRemovalById(docId) || null;
+  const [record, setRecord] = useState<RemovalRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setRecord(null);
+    setLoadError(null);
+    getRemoval(docId).then((result) => { if (active) setRecord(result); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Removal."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [docId]);
 
   // Lightbox Zoom Modal State
@@ -84,6 +91,8 @@ export default function RemovalDetailPage() {
     }
   };
 
+  if (loading) return <div role="status" className="mx-auto max-w-4xl py-12 text-center text-sm text-slate-500">Memuat laporan Removal...</div>;
+
   // Not Found State
   if (!record) {
     return (
@@ -97,7 +106,7 @@ export default function RemovalDetailPage() {
               Catatan Pelepasan Tidak Ditemukan
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-              Dokumen dengan nomor <strong>&quot;{docId || "KOSONG"}&quot;</strong> tidak terdaftar dalam catatan sistem SMARTD DISPLAY.
+              {loadError ?? `Dokumen ${docId} tidak ditemukan.`}
             </p>
           </div>
           <div className="flex items-center justify-center gap-3 pt-2">
@@ -262,13 +271,13 @@ export default function RemovalDetailPage() {
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">Tipe Alat Berat</span>
               <span className="font-semibold text-slate-900">
-                {record.equipmentType || getEquipmentTypeByUnit(record.unitNo)}
+                {record.equipmentType || "-"}
               </span>
             </div>
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">EGI (Model Unit)</span>
               <span className="font-semibold text-blue-700">
-                {record.egi || getEgiByUnit(record.unitNo)}
+                {record.egi || "-"}
               </span>
             </div>
             <div>

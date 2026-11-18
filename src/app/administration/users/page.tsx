@@ -41,6 +41,7 @@ import {
 } from "@/lib/mock-data/users";
 import { ManagedUser, UserRole, UserStatus, UserDistrict, UserProfile } from "@/types/user";
 import { recordAuditAction } from "@/lib/mock-data/audit-logs";
+import UserManagementApi from "@/components/administration/UserManagementApi";
 
 const DISTRICT_OPTIONS: UserDistrict[] = [
   "Head Office",
@@ -1534,5 +1535,5 @@ export default function UserManagementPage() {
     return <AccessDeniedView currentUser={currentUser} />;
   }
 
-  return <UserManagementContent currentUser={currentUser} />;
+  return <UserManagementApi />;
 }

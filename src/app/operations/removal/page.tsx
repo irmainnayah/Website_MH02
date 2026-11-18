@@ -1,7 +1,7 @@
 // src/app/operations/removal/page.tsx
 "use client";
 
-import React, { useState, useMemo, useSyncExternalStore, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -21,26 +21,35 @@ import {
   ChevronsRight,
 } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
-import {
-  getRemovalRecords,
-  subscribeToRemovalRecords,
-  executeDeviceRemovalDelete,
-} from "@/lib/mock-data/removal";
-import { matchesUnitNumberSearch } from "@/lib/mock-data/fleet";
+import { getRemovals, deleteRemoval } from "@/lib/removal-api";
 import { RemovalRecord } from "@/types/removal";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
 import { formatDuration } from "@/lib/utils";
 
-const DISTRICT_OPTIONS = ["Sangatta", "Bengalon", "Wahau", "Sangatta Utara"];
 const REASON_OPTIONS = ["Kerusakan", "Upgrade", "Dismantle"];
+const FILTER_COLUMNS = [
+  { key: "id", label: "Form Number" },
+  { key: "deviceId", label: "Device ID" },
+  { key: "unitNo", label: "Unit Number" },
+  { key: "reason", label: "Alasan Pelepasan" },
+  { key: "removalDate", label: "Removal Date" },
+  { key: "technicianName", label: "Teknisi" },
+] as const;
+type FilterColumn = typeof FILTER_COLUMNS[number]["key"];
 
 export default function RemovalPage() {
   const { currentUser } = useAuth();
-  const records = useSyncExternalStore(
-    subscribeToRemovalRecords,
-    getRemovalRecords,
-    getRemovalRecords
-  );
+  const [records, setRecords] = useState<RemovalRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const DISTRICT_OPTIONS = Array.from(new Set(records.flatMap((record) => record.district ? [record.district] : []))).sort();
+
+  useEffect(() => {
+    let active = true;
+    getRemovals().then((items) => { if (active) setRecords(items); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Removal."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const [mounted, setMounted] = useState(false);
 
@@ -48,6 +57,7 @@ export default function RemovalPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [districtFilter, setDistrictFilter] = useState<string>("all");
   const [reasonFilter, setReasonFilter] = useState<string>("all");
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterColumn, string>>>({});
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [pageSize, setPageSize] = useState<number>(10);
@@ -106,13 +116,16 @@ export default function RemovalPage() {
 
   const filteredRecords = useMemo(() => {
     return records.filter((rec) => {
+      for (const column of FILTER_COLUMNS) {
+        if (columnFilters[column.key] && String(rec[column.key] ?? "") !== columnFilters[column.key]) return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         if (
           !(
             rec.id.toLowerCase().includes(q) ||
             rec.deviceId.toLowerCase().includes(q) ||
-            matchesUnitNumberSearch(rec.unitNo, q) ||
+            rec.unitNo.toLowerCase().includes(q) ||
             rec.reason.toLowerCase().includes(q) ||
             (rec.technicianName && rec.technicianName.toLowerCase().includes(q)) ||
             (rec.district && rec.district.toLowerCase().includes(q))
@@ -126,7 +139,7 @@ export default function RemovalPage() {
       if (endDate && rec.removalDate > endDate) return false;
       return true;
     });
-  }, [records, searchQuery, districtFilter, reasonFilter, startDate, endDate]);
+  }, [records, searchQuery, districtFilter, reasonFilter, startDate, endDate, columnFilters]);
 
   const totalItems = filteredRecords.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -140,6 +153,7 @@ export default function RemovalPage() {
     searchQuery.trim() ||
       districtFilter !== "all" ||
       reasonFilter !== "all" ||
+      Object.values(columnFilters).some(Boolean) ||
       startDate ||
       endDate
   );
@@ -148,6 +162,7 @@ export default function RemovalPage() {
     setSearchQuery("");
     setDistrictFilter("all");
     setReasonFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setCurrentPage(1);
@@ -177,8 +192,11 @@ export default function RemovalPage() {
       "Duration (menit)",
       "GL",
     ];
-    const escapeCsvValue = (value: string | number | undefined | null) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escapeCsvValue = (value: string | number | undefined | null) => {
+      const text = String(value ?? "");
+      const safe = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
 
     const rows = filteredRecords.map((r) => [
       r.id,
@@ -225,34 +243,34 @@ export default function RemovalPage() {
     setDeleteCountdown(0);
   };
 
-  const confirmDelete = () => {
-    if (!deleteTarget || deleteCountdown > 0 || isDeleting) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleteCountdown > 0 || isDeletingRef.current || currentUser.role !== "superadmin") return;
     setIsDeleting(true);
     isDeletingRef.current = true;
 
-    const result = executeDeviceRemovalDelete(deleteTarget.id, currentUser.role);
-
-    if (result.success) {
-      recordAuditAction({
-        table: "removal",
-        operation: "DELETE",
-        recordId: deleteTarget.id,
-      });
-      setAlertMessage({ type: "success", text: result.message });
+    try {
+      await deleteRemoval(deleteTarget.id);
+      setRecords((previous) => previous.filter((record) => record.id !== deleteTarget.id));
+      setAlertMessage({ type: "success", text: `Laporan ${deleteTarget.id} berhasil dihapus.` });
       setDeleteTarget(null);
       setDeleteCountdown(0);
-    } else {
-      setAlertMessage({ type: "error", text: result.message });
+    } catch (error) {
+      setAlertMessage({ type: "error", text: error instanceof Error ? error.message : "Gagal menghapus Removal." });
       setDeleteTarget(null);
       setDeleteCountdown(0);
+    } finally {
+      setIsDeleting(false);
+      isDeletingRef.current = false;
     }
-
-    setIsDeleting(false);
-    isDeletingRef.current = false;
   };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {(loading || loadError) && (
+        <div role={loadError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${loadError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+          {loadError ?? "Memuat riwayat Removal..."}
+        </div>
+      )}
       {/* 1. Header Card */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div>
@@ -445,6 +463,23 @@ export default function RemovalPage() {
                 <th className="py-3 px-4">Teknisi</th>
                 <th className="py-3 px-4 text-center">Actions</th>
               </tr>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                {FILTER_COLUMNS.map((column) => (
+                  <th key={column.key} className="px-4 pb-2 font-normal">
+                    <select aria-label={`Filter ${column.label}`} value={columnFilters[column.key] ?? ""}
+                      onChange={(event) => { setColumnFilters((previous) => ({ ...previous, [column.key]: event.target.value })); setCurrentPage(1); }}
+                      className="w-full max-w-40 rounded border border-slate-200 bg-white px-1 py-1 text-[11px] font-normal text-slate-600">
+                      <option value="">Semua</option>
+                      {Array.from(new Set(records.map((record) => String(record[column.key] ?? "")))).filter(Boolean).sort().map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                  </th>
+                ))}
+                <th className="px-4 pb-2 text-center">
+                  <button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={handleResetFilters} className="rounded p-1 text-slate-500 hover:bg-slate-200"><RotateCcw className="h-3.5 w-3.5" /></button>
+                </th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {paginated.length === 0 ? (
@@ -453,7 +488,7 @@ export default function RemovalPage() {
                     <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
                       <Trash2 className="h-6 w-6" />
                     </div>
-                    <p className="text-sm font-semibold text-slate-700">Tidak ada data pencabutan</p>
+                    <p className="text-sm font-semibold text-slate-700">{loading ? "Memuat riwayat Removal..." : loadError ? "Data Removal belum dapat dimuat" : "Tidak ada data pencabutan"}</p>
                     <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
                       Gunakan filter atau buat laporan baru.
                     </p>
