@@ -27,6 +27,27 @@ test("PostgreSQL removal later-activity guard follows start/create ordering, not
   assert.match(guard, /reader\.GetString\(0\)/);
 });
 
+test("PostgreSQL troubleshooting preserves device master and follows documented history ordering", () => {
+  const service = read("backend-dotnet/TroubleshootWrites.cs");
+  assert.doesNotMatch(service, /\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:public\.)?devices\b/i);
+  assert.match(service, /@status, @status, @unit, @unit, @location, @location, @maintenance, @maintenance/);
+  assert.match(service, /before == ReadState\(reader, 12\)/);
+  assert.match(service, /a\.started_at > @start OR \(a\.started_at = @start AND a\.created_at > @created\)/);
+  assert.doesNotMatch(service, /a\.finished_at > @start/);
+  assert.match(service, /device\.Current\.Status == 1 && device\.Current\.Unit is not null/);
+  assert.match(service, /DEVICE_NOT_INSTALLED/);
+  const form = read("src/app/support/troubleshoots/new/page.tsx");
+  assert.match(form, /device\.status === "in_use" && Boolean\(device\.unitNo\?\.trim\(\)\)/);
+  assert.match(form, /device\.deviceId === editingRecord\?\.deviceId/);
+  assert.match(form, /fleetEquipmentType: preserveSnapshot \? originalRecord\?\.fleetEquipmentType : selectedDevice\?\.equipmentType/);
+  const components = /Components = \[([^\]]+)\]/.exec(read("backend-dotnet/TroubleshootEndpoints.cs"));
+  const constraint = /component_type varchar\(20\) CHECK \(component_type IN \(([^)]+)\)\)/.exec(read("database/postgresql/001_initial_schema.sql"));
+  assert.ok(components && constraint);
+  const declared = [...components[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort();
+  const allowed = [...constraint[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
+  assert.deepEqual(declared, allowed);
+});
+
 test("constraint names are extracted from SQL Server messages (names only, never values)", () => {
   assert.equal(
     constraintNameFromMessage('The INSERT statement conflicted with the CHECK constraint "CK_devices_data_source". The conflict occurred in database "db", table "dbo.devices", column \'data_source\'.'),

@@ -61,6 +61,8 @@ ReplacementEndpoints.Map(app, GetConnectionString);
 ReplacementWrites.Map(app, GetConnectionString);
 RemovalEndpoints.Map(app, GetConnectionString);
 RemovalWrites.Map(app, GetConnectionString);
+TroubleshootEndpoints.Map(app, GetConnectionString);
+TroubleshootWrites.Map(app, GetConnectionString);
 InstallationPhotos.Map(app, GetConnectionString);
 InstallationDeletes.Map(app, GetConnectionString);
 InstallationUpdates.Map(app, GetConnectionString);

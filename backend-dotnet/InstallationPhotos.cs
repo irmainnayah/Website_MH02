@@ -21,7 +21,7 @@ public static class InstallationPhotos
                 await using var command = new NpgsqlCommand("""
                     SELECT p.storage_path, p.mime_type, p.size_bytes, p.sha256, p.storage_provider
                     FROM transaction_photos p JOIN activities a ON a.activity_id = p.activity_id
-                    WHERE p.photo_id = @id AND a.activity_type IN ('installation', 'replacement', 'removal') AND (@site IS NULL OR a.site_id = @site)
+                    WHERE p.photo_id = @id AND a.activity_type IN ('installation', 'replacement', 'removal', 'troubleshoot') AND (@site IS NULL OR a.site_id = @site)
                     """, connection);
                 command.Parameters.AddWithValue("id", id);
                 command.Parameters.Add("site", NpgsqlDbType.Integer).Value = (object?)site ?? DBNull.Value;

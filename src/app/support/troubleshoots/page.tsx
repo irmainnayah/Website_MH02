@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -23,14 +23,8 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
-import {
-  deleteTroubleshootRecord,
-  getTroubleshootRecords,
-  subscribeToTroubleshootRecords,
-} from "@/lib/mock-data/troubleshoots";
-import { matchesUnitNumberSearch } from "@/lib/mock-data/fleet";
-import { TroubleshootEquipmentType } from "@/types/troubleshoot";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
+import { getTroubleshoots, deleteTroubleshoot } from "@/lib/troubleshoot-api";
+import { TroubleshootEquipmentType, TroubleshootRecord } from "@/types/troubleshoot";
 
 const EQUIPMENT_TYPES: TroubleshootEquipmentType[] = [
   "MH02 Device",
@@ -43,16 +37,34 @@ const EQUIPMENT_TYPES: TroubleshootEquipmentType[] = [
   "Firmware",
 ];
 
+const FILTER_COLUMNS = [
+  { key: "id", label: "Form Number" },
+  { key: "deviceId", label: "Device ID" },
+  { key: "unitNo", label: "Unit Number" },
+  { key: "district", label: "Distrik" },
+  { key: "equipmentType", label: "Equipment Type" },
+  { key: "issue", label: "Issue" },
+  { key: "activityDate", label: "Date" },
+] as const;
+type FilterColumn = typeof FILTER_COLUMNS[number]["key"];
+
 export default function TroubleshootsPage() {
   const { currentUser } = useAuth();
-  const records = useSyncExternalStore(
-    subscribeToTroubleshootRecords,
-    getTroubleshootRecords,
-    getTroubleshootRecords
-  );
+  const [records, setRecords] = useState<TroubleshootRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  useEffect(() => {
+    let active = true;
+    getTroubleshoots().then((items) => { if (active) setRecords(items); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Troubleshoot."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [districtFilter, setDistrictFilter] = useState("all");
   const [equipmentFilter, setEquipmentFilter] = useState("all");
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterColumn, string>>>({});
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [pageSize, setPageSize] = useState(10);
@@ -100,6 +112,7 @@ export default function TroubleshootsPage() {
     if (!deleteTarget) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (isDeletingRef.current) return;
         setDeleteTarget(null);
         setDeleteCountdown(0);
       }
@@ -121,7 +134,7 @@ export default function TroubleshootsPage() {
     setDeleteCountdown(0);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (
       currentUser.role !== "superadmin" ||
       deleteCountdown > 0 ||
@@ -130,20 +143,19 @@ export default function TroubleshootsPage() {
     ) return;
 
     isDeletingRef.current = true;
-    const deleted = deleteTroubleshootRecord(deleteTarget.id);
-    if (!deleted) {
-      setAlert({ type: "error", text: `Laporan ${deleteTarget.id} tidak ditemukan. Tidak ada perubahan yang dilakukan.` });
+    setIsDeleting(true);
+    try {
+      await deleteTroubleshoot(deleteTarget.id);
+      setRecords((previous) => previous.filter((record) => record.id !== deleteTarget.id));
+      setAlert({ type: "success", text: `Laporan ${deleteTarget.id} berhasil dihapus.` });
+    } catch (error) {
+      setAlert({ type: "error", text: error instanceof Error ? error.message : "Gagal menghapus Troubleshoot." });
+    } finally {
       setDeleteTarget(null);
       setDeleteCountdown(0);
       isDeletingRef.current = false;
-      return;
+      setIsDeleting(false);
     }
-
-    recordAuditAction({ table: "troubleshoot", operation: "DELETE", recordId: deleteTarget.id });
-    setAlert({ type: "success", text: `Laporan ${deleteTarget.id} berhasil dihapus permanen dari mock data sesi ini.` });
-    setDeleteTarget(null);
-    setDeleteCountdown(0);
-    isDeletingRef.current = false;
   };
 
   const districts = useMemo(
@@ -155,6 +167,9 @@ export default function TroubleshootsPage() {
     : null;
 
   const filteredRecords = useMemo(() => records.filter((record) => {
+    for (const column of FILTER_COLUMNS) {
+      if (columnFilters[column.key] && String(record[column.key] ?? "") !== columnFilters[column.key]) return false;
+    }
     const query = searchQuery.trim().toLowerCase();
     if (query && ![
       record.id,
@@ -166,13 +181,13 @@ export default function TroubleshootsPage() {
       record.technicianName,
       record.technicianNrp ?? "",
       record.remarks ?? "",
-    ].some((value) => value.toLowerCase().includes(query)) && !matchesUnitNumberSearch(record.unitNo, query)) return false;
+    ].some((value) => value.toLowerCase().includes(query)) && !record.unitNo.toLowerCase().includes(query)) return false;
     if (districtFilter !== "all" && record.district !== districtFilter) return false;
     if (equipmentFilter !== "all" && record.equipmentType !== equipmentFilter) return false;
     if (startDate && record.activityDate < startDate) return false;
     if (endDate && record.activityDate > endDate) return false;
     return true;
-  }), [records, searchQuery, districtFilter, equipmentFilter, startDate, endDate]);
+  }), [records, searchQuery, districtFilter, equipmentFilter, startDate, endDate, columnFilters]);
 
   const totalItems = filteredRecords.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -181,12 +196,13 @@ export default function TroubleshootsPage() {
     const start = (safeCurrentPage - 1) * pageSize;
     return filteredRecords.slice(start, start + pageSize);
   }, [filteredRecords, safeCurrentPage, pageSize]);
-  const isFiltered = Boolean(searchQuery.trim() || districtFilter !== "all" || equipmentFilter !== "all" || startDate || endDate);
+  const isFiltered = Boolean(searchQuery.trim() || districtFilter !== "all" || equipmentFilter !== "all" || startDate || endDate || Object.values(columnFilters).some(Boolean));
 
   const resetFilters = () => {
     setSearchQuery("");
     setDistrictFilter("all");
     setEquipmentFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setCurrentPage(1);
@@ -207,8 +223,11 @@ export default function TroubleshootsPage() {
       "Issue", "Action Taken", "Teknisi", "NRP", "Caption Foto Sebelum",
       "Caption Foto Sesudah", "Remarks",
     ];
-    const escapeCsv = (value: string | number | undefined) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escapeCsv = (value: string | number | undefined) => {
+      const text = String(value ?? "");
+      const safe = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const rows = filteredRecords.map((record) => [
       record.id,
       record.deviceId,
@@ -241,6 +260,11 @@ export default function TroubleshootsPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {(loading || loadError) && (
+        <div role={loadError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${loadError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+          {loadError ?? "Memuat riwayat Troubleshoot..."}
+        </div>
+      )}
       {alert && (
         <div className={`p-4 rounded-xl border flex items-center justify-between text-xs font-medium shadow-sm animate-fadeIn ${alert.type === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`}>
           <span className="flex items-center gap-2">{alert.type === "success" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}{alert.text}</span>
@@ -395,6 +419,21 @@ export default function TroubleshootsPage() {
                 <th className="py-3 px-4">Date</th>
                 <th className="py-3 px-4 text-center">Actions</th>
               </tr>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                {FILTER_COLUMNS.map((column) => (
+                  <th key={column.key} className="px-4 pb-2 font-normal">
+                    <select aria-label={`Filter ${column.label}`} value={columnFilters[column.key] ?? ""}
+                      onChange={(event) => { setColumnFilters((previous) => ({ ...previous, [column.key]: event.target.value })); setCurrentPage(1); }}
+                      className="w-full max-w-40 rounded border border-slate-200 bg-white px-1 py-1 text-[11px] font-normal text-slate-600">
+                      <option value="">Semua</option>
+                      {Array.from(new Set(records.map((record) => String(record[column.key] ?? "")))).filter(Boolean).sort().map((value) => (
+                        <option key={value} value={value}>{value}</option>
+                      ))}
+                    </select>
+                  </th>
+                ))}
+                <th className="px-4 pb-2 text-center"><button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={resetFilters} className="rounded p-1 text-slate-500 hover:bg-slate-200"><RotateCcw className="h-3.5 w-3.5" /></button></th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {paginatedRecords.length === 0 ? (
@@ -403,7 +442,7 @@ export default function TroubleshootsPage() {
                     <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
                       <AlertTriangle className="h-6 w-6" />
                     </div>
-                    <p className="text-sm font-semibold text-slate-700">{records.length ? "Tidak ada laporan yang sesuai" : "Belum ada laporan Troubleshoot"}</p>
+                    <p className="text-sm font-semibold text-slate-700">{loading ? "Memuat riwayat Troubleshoot..." : loadError ? "Data Troubleshoot belum dapat dimuat" : records.length ? "Tidak ada laporan yang sesuai" : "Belum ada laporan Troubleshoot"}</p>
                     <p className="mt-1 text-xs text-slate-400">{records.length ? "Ubah pencarian atau filter, atau buat laporan baru." : "Buat laporan Troubleshoot untuk mulai mengisi Records."}</p>
                     {isFiltered && (
                       <button type="button" onClick={resetFilters} className="mt-3 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700">
@@ -544,7 +583,7 @@ export default function TroubleshootsPage() {
                 <span>Pemeriksaan Keamanan Konsistensi:</span>
               </div>
               <p>
-                Aktivitas Troubleshoot terkait tidak lagi ditampilkan pada Activity Log dan Device Timeline. Aksi ini permanen untuk mock data sesi ini.
+                Penghapusan laporan akan diperiksa terhadap snapshot dan riwayat perangkat. Status dan unit perangkat tidak diubah oleh transaksi Troubleshoot.
               </p>
             </div>
 
@@ -552,7 +591,7 @@ export default function TroubleshootsPage() {
               <button
                 type="button"
                 onClick={cancelDelete}
-                disabled={isDeletingRef.current}
+                disabled={isDeleting}
                 className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
               >
                 Batal
@@ -560,7 +599,7 @@ export default function TroubleshootsPage() {
               <button
                 type="button"
                 onClick={confirmDelete}
-                disabled={deleteCountdown > 0 || currentUser.role !== "superadmin"}
+                disabled={isDeleting || deleteCountdown > 0 || currentUser.role !== "superadmin"}
                 className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50 transition flex items-center gap-1.5"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -577,7 +616,7 @@ export default function TroubleshootsPage() {
       )}
 
       <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
-        <Clock className="h-3.5 w-3.5" /> Data mock hanya tersedia selama sesi aplikasi dan tidak bertahan setelah refresh.
+        <Clock className="h-3.5 w-3.5" /> {records.length} laporan tersimpan.
       </p>
     </div>
   );

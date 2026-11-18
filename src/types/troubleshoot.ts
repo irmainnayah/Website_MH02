@@ -18,6 +18,10 @@ export interface TroubleshootPhotos {
 
 export interface TroubleshootRecord {
   id: string; // Form Number, e.g. TRB-202610-001
+  siteId?: number;
+  timeZone?: string;
+  rowVersion?: string;
+  serialNumber?: string;
   deviceId: string;
   unitNo: string;
   fleetEquipmentType?: EquipmentType; // Type armada/unit: Dump Truck, etc.

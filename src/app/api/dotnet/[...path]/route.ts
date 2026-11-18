@@ -15,6 +15,7 @@ const routes: Record<string, readonly string[]> = {
   installations: ["GET", "POST"],
   replacements: ["GET", "POST"],
   removals: ["GET", "POST"],
+  troubleshoots: ["GET", "POST"],
   "dashboard/status-distribution": ["GET"],
   users: ["GET", "POST"],
 };
@@ -31,8 +32,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const isInstallationDetail = path.length === 2 && path[0] === "installations" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
   const isReplacementDetail = path.length === 2 && path[0] === "replacements" && /^REP-\d{6}-\d{3,}$/i.test(path[1]);
   const isRemovalDetail = path.length === 2 && path[0] === "removals" && /^REM-\d{6}-\d{3,}$/i.test(path[1]);
+  const isTroubleshootDetail = path.length === 2 && path[0] === "troubleshoots" && /^TRB-\d{6}-\d{3,}$/i.test(path[1]);
   const isPhoto = path.length === 2 && path[0] === "photos" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
-  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && request.method === "GET") || (isPhoto && request.method === "GET") || ((isInstallationDetail || isReplacementDetail || isRemovalDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
+  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && request.method === "GET") || (isPhoto && request.method === "GET") || ((isInstallationDetail || isReplacementDetail || isRemovalDetail || isTroubleshootDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
   }
 
@@ -79,7 +81,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       body,
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.timeout((endpoint === "installations" && request.method === "POST") || ((endpoint === "replacements" || isReplacementDetail || endpoint === "removals" || isRemovalDetail) && ["POST", "PATCH"].includes(request.method)) ? 120000 : 10000),
+      signal: AbortSignal.timeout((endpoint === "installations" && request.method === "POST") || ((endpoint === "replacements" || isReplacementDetail || endpoint === "removals" || isRemovalDetail || endpoint === "troubleshoots" || isTroubleshootDetail) && ["POST", "PATCH"].includes(request.method)) ? 120000 : 10000),
     });
     const result = new NextResponse(response.body, { status: response.status });
     result.headers.set("Cache-Control", "no-store");

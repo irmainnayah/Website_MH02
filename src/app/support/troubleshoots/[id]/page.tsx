@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -25,24 +25,28 @@ import {
   LayoutDashboard,
   ArrowUpRight,
 } from "lucide-react";
-import {
-  getTroubleshootRecords,
-  subscribeToTroubleshootRecords,
-} from "@/lib/mock-data/troubleshoots";
-import { getEquipmentTypeByUnit, getEgiByUnit } from "@/lib/mock-data/fleet";
+import { getTroubleshoot } from "@/lib/troubleshoot-api";
+import { TroubleshootRecord } from "@/types/troubleshoot";
 import { formatDateTimeRange, formatDuration } from "@/lib/utils";
 
 export default function TroubleshootDetailPage() {
   const { currentUser } = useAuth();
   const params = useParams<{ id: string }>();
   const recordId = typeof params?.id === "string" ? params.id : "";
-  const records = useSyncExternalStore(
-    subscribeToTroubleshootRecords,
-    getTroubleshootRecords,
-    getTroubleshootRecords
-  );
+  const [record, setRecord] = useState<TroubleshootRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setRecord(null);
+    setLoadError(null);
+    getTroubleshoot(recordId).then((result) => { if (active) setRecord(result); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Troubleshoot."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [recordId]);
   const [zoomedPhoto, setZoomedPhoto] = useState<{ title: string; url: string; caption: string } | null>(null);
-  const record = records.find((item) => item.id.toLowerCase() === recordId.toLowerCase());
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -66,6 +70,7 @@ export default function TroubleshootDetailPage() {
     }
   };
 
+  if (loading) return <div role="status" className="mx-auto max-w-4xl py-12 text-center text-sm text-slate-500">Memuat laporan Troubleshoot...</div>;
   if (!record) {
     return (
       <div className="space-y-6 max-w-4xl mx-auto py-12">
@@ -78,7 +83,7 @@ export default function TroubleshootDetailPage() {
               Laporan Troubleshoot Tidak Ditemukan
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-              Dokumen dengan nomor <strong>&quot;{recordId || "KOSONG"}&quot;</strong> tidak terdaftar dalam catatan sistem SMARTD DISPLAY.
+              {loadError ?? `Dokumen ${recordId} tidak ditemukan.`}
             </p>
           </div>
           <div className="flex items-center justify-center gap-3 pt-2">
@@ -230,13 +235,13 @@ export default function TroubleshootDetailPage() {
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">Tipe Alat Berat</span>
               <span className="font-semibold text-slate-900">
-                {record.fleetEquipmentType || getEquipmentTypeByUnit(record.unitNo)}
+                {record.fleetEquipmentType || "-"}
               </span>
             </div>
             <div>
               <span className="text-xs text-slate-500 block mb-0.5">EGI (Model Unit)</span>
               <span className="font-semibold text-blue-700">
-                {record.egi || getEgiByUnit(record.unitNo)}
+                {record.egi || "-"}
               </span>
             </div>
             <div>

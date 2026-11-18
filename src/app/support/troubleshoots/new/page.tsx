@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -19,24 +19,14 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
-import { devices } from "@/lib/mock-data/devices";
-import { getEquipmentTypeByUnit, getEgiByUnit, getFleetMasterByUnit, matchesUnitNumberSearch } from "@/lib/mock-data/fleet";
 import { useAuth } from "@/features/auth/AuthContext";
-import { TECHNICIANS } from "@/lib/mock-data/installations";
-import {
-  addTroubleshootRecord,
-  getTroubleshootRecords,
-  getNextTroubleshootFormNumber,
-  subscribeToTroubleshootRecords,
-  updateTroubleshootRecord,
-} from "@/lib/mock-data/troubleshoots";
+import { getTroubleshoot, getTroubleshootFormOptions, saveTroubleshoot, TroubleshootDevice, TroubleshootSite } from "@/lib/troubleshoot-api";
 import {
   TroubleshootEquipmentType,
   TroubleshootFormData,
   TroubleshootRecord,
 } from "@/types/troubleshoot";
 import { DistrictName } from "@/types/dashboard";
-import { recordAuditAction } from "@/lib/mock-data/audit-logs";
 import {
   calculateWorkDuration,
   normalizeToDateTimeString,
@@ -108,7 +98,7 @@ function SearchableDropdown({
   const filteredOptions = options.filter((option) => {
     if (!query.trim()) return true;
     if (id.includes("unit") || id.includes("unit-no")) {
-      return matchesUnitNumberSearch(option.value, query) || matchesUnitNumberSearch(option.label, query);
+      return `${option.value} ${option.label}`.toLowerCase().includes(query.trim().toLowerCase());
     }
     return `${option.label} ${option.value}`.toLowerCase().includes(query.trim().toLowerCase());
   });
@@ -297,20 +287,19 @@ function TroubleshootFormPage() {
   const editId = searchParams?.get("edit");
   const isEditMode = Boolean(editId);
   const { currentUser } = useAuth();
-  const records = useSyncExternalStore(
-    subscribeToTroubleshootRecords,
-    getTroubleshootRecords,
-    getTroubleshootRecords
-  );
-  const editingRecord = editId ? records.find((record) => record.id === editId) : undefined;
+  const [editingRecord, setEditingRecord] = useState<TroubleshootRecord | undefined>();
+  const [devices, setDevices] = useState<TroubleshootDevice[]>([]);
+  const [sites, setSites] = useState<TroubleshootSite[]>([]);
+  const [optionsReady, setOptionsReady] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
   const eligibleDevices = useMemo(() => {
-    const available = devices.filter((device) => device.status === "in_use");
-    if (editingRecord && !available.some((device) => device.deviceId === editingRecord.deviceId)) {
-      const historicalDevice = devices.find((device) => device.deviceId === editingRecord.deviceId);
-      if (historicalDevice) return [...available, historicalDevice];
-    }
-    return available;
-  }, [editingRecord]);
+    return devices.filter((device) =>
+      (!editingRecord?.siteId || device.siteId === editingRecord.siteId) &&
+      ((device.status === "in_use" && Boolean(device.unitNo?.trim())) || device.deviceId === editingRecord?.deviceId)
+    );
+  }, [devices, editingRecord]);
   const [formData, setFormData] = useState<TroubleshootFormData>(EMPTY_FORM);
   const [formNumber, setFormNumber] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -327,12 +316,12 @@ function TroubleshootFormPage() {
   const [zoomedPhoto, setZoomedPhoto] = useState<{ title: string; url: string; caption: string } | null>(null);
   const duration = calculateWorkDuration(formData.startTime, formData.endTime, formData.activityDate);
   const selectedDevice = eligibleDevices.find((device) => device.deviceId === formData.deviceId);
-  const selectedDeviceExists = devices.find((device) => device.deviceId === formData.deviceId);
 
   const deviceOptions: SearchableOption[] = useMemo(() => {
     return eligibleDevices.map((device) => {
-      const unit = device.unitNo ?? (editingRecord?.deviceId === device.deviceId ? editingRecord.unitNo : "-");
-      const dist = device.district ?? (editingRecord?.deviceId === device.deviceId ? editingRecord.district : "-");
+      const historicalSelection = editingRecord?.deviceId === device.deviceId;
+      const unit = historicalSelection ? editingRecord.unitNo : device.unitNo ?? "-";
+      const dist = historicalSelection ? editingRecord.district : device.district ?? "-";
       return {
         value: device.deviceId,
         label: `${device.deviceId} (${device.serialNumber}) · Unit: ${unit} [${dist}]`,
@@ -340,12 +329,28 @@ function TroubleshootFormPage() {
     });
   }, [eligibleDevices, editingRecord]);
 
-  const technicianOptions: SearchableOption[] = useMemo(() => {
-    return TECHNICIANS.map((technician) => ({
-      value: technician.name,
-      label: `${technician.name} (${technician.nrp})`,
-    }));
+  const technicianOptions: SearchableOption[] = [{ value: formData.technicianName, label: `${formData.technicianName} (${formData.technicianNrp})` }];
+
+  useEffect(() => {
+    let active = true;
+    getTroubleshootFormOptions().then((result) => {
+      if (!active) return;
+      setDevices(result.devices);
+      setSites(result.sites);
+      setOptionsReady(true);
+    }).catch((error: unknown) => { if (active) setOptionsError(error instanceof Error ? error.message : "Gagal memuat dropdown Troubleshoot."); });
+    return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!editId) { setEditingRecord(undefined); return; }
+    let active = true;
+    setIsFormReady(false);
+    initializedEditIdRef.current = null;
+    getTroubleshoot(editId).then((record) => { if (active) setEditingRecord(record); })
+      .catch((error: unknown) => { if (active) setOptionsError(error instanceof Error ? error.message : "Laporan tidak ditemukan."); });
+    return () => { active = false; };
+  }, [editId]);
 
   const equipmentTypeOptions: SearchableOption[] = useMemo(() => {
     return EQUIPMENT_TYPES.map((type) => ({
@@ -385,21 +390,21 @@ function TroubleshootFormPage() {
   useEffect(() => {
     if (!editId) {
       initializedEditIdRef.current = null;
-      setFormNumber(getNextTroubleshootFormNumber());
+      setFormNumber("Dibuat saat disimpan");
+      setFormData((previous) => ({ ...previous, technicianName: currentUser.name, technicianNrp: currentUser.nrp }));
       setIsFormReady(true);
       return;
     }
     if (initializedEditIdRef.current === editId) return;
-    initializedEditIdRef.current = editId;
 
     if (currentUser.role !== "superadmin") {
       router.replace(`/support/troubleshoots/${encodeURIComponent(editId)}`);
       return;
     }
-    if (!editingRecord) {
-      router.replace(`/support/troubleshoots/${encodeURIComponent(editId)}`);
+    if (!editingRecord || editingRecord.id !== editId) {
       return;
     }
+    initializedEditIdRef.current = editId;
 
     setFormNumber(editingRecord.id);
     setFormData({
@@ -425,7 +430,7 @@ function TroubleshootFormPage() {
       },
     });
     setIsFormReady(true);
-  }, [currentUser.role, editId, editingRecord, router]);
+  }, [currentUser.role, currentUser.name, currentUser.nrp, editId, editingRecord, router]);
 
   const update = <K extends keyof TroubleshootFormData>(key: K, value: TroubleshootFormData[K]) => {
     setFormData((current) => ({ ...current, [key]: value }));
@@ -437,24 +442,23 @@ function TroubleshootFormPage() {
     setFormData((current) => ({
       ...current,
       deviceId,
-      unitNo: device?.unitNo ?? (historicalSelection ? editingRecord?.unitNo : "") ?? "",
-      district: (device?.district ?? (historicalSelection ? editingRecord?.district : "")) as DistrictName,
+      unitNo: historicalSelection ? editingRecord?.unitNo ?? "" : device?.unitNo ?? "",
+      district: (historicalSelection ? editingRecord?.district : device?.district ?? "") as DistrictName,
     }));
   };
 
   const selectTechnician = (name: string) => {
-    const technician = TECHNICIANS.find((item) => item.name === name);
     setFormData((current) => ({
       ...current,
-      technicianName: name,
-      technicianNrp: technician?.nrp ?? "",
+      technicianName: currentUser.name,
+      technicianNrp: currentUser.nrp,
     }));
   };
 
   const handlePhoto = (slot: PhotoSlot, file?: File) => {
     if (!file) return;
-    if (file.type !== "image/png" && file.type !== "image/jpeg") {
-      setAlert({ type: "error", text: "Pilih file gambar PNG atau JPG." });
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size === 0) {
+      setAlert({ type: "error", text: "Pilih foto PNG, JPEG, atau WebP yang tidak kosong." });
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -484,16 +488,14 @@ function TroubleshootFormPage() {
     }));
   };
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isEditMode) {
       if (submitted || isCreatingRef.current) return;
       isCreatingRef.current = true;
     }
     if (isEditMode && currentUser.role !== "superadmin") return;
-    const originalRecord = isEditMode
-      ? getTroubleshootRecords().find((record) => record.id === editId)
-      : undefined;
+    const originalRecord = isEditMode ? editingRecord : undefined;
     if (isEditMode && !originalRecord) {
       setAlert({ type: "error", text: "Laporan tidak ditemukan. Perubahan tidak disimpan." });
       if (editId) router.push(`/support/troubleshoots/${encodeURIComponent(editId)}`);
@@ -501,15 +503,22 @@ function TroubleshootFormPage() {
     }
 
     const nextErrors: Record<string, string> = {};
+    if (!isFormReady || !optionsReady || optionsError) nextErrors.loading = optionsError ?? "Data formulir belum siap.";
     const usingOriginalDeviceSnapshot = Boolean(isEditMode && originalRecord?.deviceId === formData.deviceId);
     const validDevice = usingOriginalDeviceSnapshot
-      ? Boolean(selectedDeviceExists && formData.unitNo.trim() && formData.district)
-      : Boolean(selectedDevice?.status === "in_use" && selectedDevice.unitNo && selectedDevice.district);
-    if (!validDevice) nextErrors.deviceId = "Pilih perangkat aktif dari master perangkat.";
+      ? Boolean(originalRecord?.siteId)
+      : Boolean(selectedDevice?.siteId && selectedDevice.status === "in_use" && selectedDevice.unitNo?.trim());
+    if (!validDevice) nextErrors.deviceId = "Pilih perangkat yang sedang terpasang pada unit dari data pemasangan aktif.";
     if (!formData.technicianName) nextErrors.technicianName = "Pilih teknisi pelaksana.";
     if (!formData.activityDate) nextErrors.activityDate = "Tanggal aktivitas wajib diisi.";
     if (!formData.startTime || !formData.endTime) nextErrors.time = "Start Date & Time dan Finish Date & Time wajib diisi.";
     else if (!duration.isValid) nextErrors.time = duration.formatted;
+    const timeZone = editingRecord?.timeZone ?? sites.find((site) => site.siteId === selectedDevice?.siteId)?.timeZone;
+    if (timeZone && formData.endTime) {
+      const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(Date.now() + 120000));
+      const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      if (formData.endTime > `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`) nextErrors.time = "Waktu selesai tidak boleh di masa depan menurut zona waktu Site.";
+    }
     if (!formData.equipmentType) nextErrors.equipmentType = "Pilih equipment type.";
     if (!formData.issue.trim()) nextErrors.issue = "Deskripsi issue wajib diisi.";
     if (!formData.actionTaken.trim()) nextErrors.actionTaken = "Action taken wajib diisi.";
@@ -530,20 +539,21 @@ function TroubleshootFormPage() {
       return;
     }
 
-    const id = isEditMode ? originalRecord!.id : (formNumber || getNextTroubleshootFormNumber());
+    const id = isEditMode ? originalRecord!.id : "";
     const cleanUnit = formData.unitNo.trim();
-    const troubleshootMaster = getFleetMasterByUnit(cleanUnit);
+    const preserveSnapshot = originalRecord?.deviceId === formData.deviceId;
     const normalizedRecord: TroubleshootRecord = {
       ...(originalRecord ?? {} as TroubleshootRecord),
       id,
+      siteId: originalRecord?.siteId ?? selectedDevice?.siteId,
       deviceId: formData.deviceId,
       unitNo: cleanUnit,
-      fleetEquipmentType: troubleshootMaster?.equipmentType,
-      egi: troubleshootMaster?.egi ?? "",
+      fleetEquipmentType: preserveSnapshot ? originalRecord?.fleetEquipmentType : selectedDevice?.equipmentType ?? undefined,
+      egi: preserveSnapshot ? originalRecord?.egi : selectedDevice?.egi ?? "",
       district: formData.district,
       technicianName: formData.technicianName.trim(),
       technicianNrp: formData.technicianNrp.trim() || undefined,
-      activityDate: formData.activityDate,
+      activityDate: formData.startTime.slice(0, 10),
       dateTime: `${formData.activityDate} ${formData.startTime}`,
       startTime: formData.startTime,
       endTime: formData.endTime,
@@ -579,18 +589,25 @@ function TroubleshootFormPage() {
       return;
     }
 
-    const record = normalizedRecord;
-    const added = addTroubleshootRecord(record);
-    if (!added) {
+    setIsSaving(true);
+    try {
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = sessionStorage.getItem("mh02-troubleshoot-key") ?? crypto.randomUUID();
+        sessionStorage.setItem("mh02-troubleshoot-key", idempotencyKeyRef.current);
+      }
+      const saved = await saveTroubleshoot(normalizedRecord, { edit: false, key: idempotencyKeyRef.current });
+      sessionStorage.removeItem("mh02-troubleshoot-key");
+      idempotencyKeyRef.current = null;
+      setSubmitted(true);
+      setErrors({});
+      setAlert(null);
+      setCreatedRecordId(saved.formNumber);
+    } catch (error) {
       isCreatingRef.current = false;
-      setAlert({ type: "error", text: `Laporan ${record.id} tidak dapat disimpan karena nomor laporan sudah digunakan.` });
-      return;
+      setAlert({ type: "error", text: error instanceof Error ? error.message : "Gagal menyimpan Troubleshoot." });
+    } finally {
+      setIsSaving(false);
     }
-    recordAuditAction({ table: "troubleshoot", operation: "INSERT", recordId: record.id });
-    setSubmitted(true);
-    setErrors({});
-    setAlert(null);
-    setCreatedRecordId(record.id);
   };
 
   const cancelPendingEdit = () => {
@@ -598,46 +615,29 @@ function TroubleshootFormPage() {
     setPendingEdit(null);
   };
 
-  const confirmPendingEdit = () => {
+  const confirmPendingEdit = async () => {
     if (currentUser.role !== "superadmin" || isApplyingEditRef.current || !pendingEdit) return;
     isApplyingEditRef.current = true;
     setIsApplyingEdit(true);
-    const currentRecord = getTroubleshootRecords().find((record) => record.id === pendingEdit.record.id);
-    if (!currentRecord) {
+    try {
+      await saveTroubleshoot(pendingEdit.record, { edit: true });
       const id = pendingEdit.record.id;
       setPendingEdit(null);
-      setAlert({ type: "error", text: "Laporan tidak ditemukan. Perubahan tidak disimpan." });
-      setIsApplyingEdit(false);
-      isApplyingEditRef.current = false;
       router.push(`/support/troubleshoots/${encodeURIComponent(id)}`);
-      return;
-    }
-
-    const saved = updateTroubleshootRecord({
-      ...pendingEdit.record,
-      createdAt: currentRecord.createdAt,
-    });
-    if (!saved) {
+    } catch (error) {
       setPendingEdit(null);
-      setAlert({ type: "error", text: "Laporan gagal diperbarui. Tidak ada perubahan yang disimpan." });
+      setAlert({ type: "error", text: error instanceof Error ? error.message : "Gagal mengedit Troubleshoot." });
+    } finally {
       setIsApplyingEdit(false);
       isApplyingEditRef.current = false;
-      router.push(`/support/troubleshoots/${encodeURIComponent(pendingEdit.record.id)}`);
-      return;
     }
-
-    recordAuditAction({ table: "troubleshoot", operation: "UPDATE", recordId: pendingEdit.record.id });
-    const id = pendingEdit.record.id;
-    setPendingEdit(null);
-    setIsApplyingEdit(false);
-    isApplyingEditRef.current = false;
-    router.push(`/support/troubleshoots/${encodeURIComponent(id)}`);
   };
 
   const inputClass = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500";
   const readOnlyClass = "w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600";
 
-  if (isEditMode && !isFormReady) {
+  if (optionsError) return <div role="alert" className="mx-auto max-w-5xl rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{optionsError}</div>;
+  if (!optionsReady || !isFormReady) {
     return <div className="mx-auto max-w-5xl rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Memuat laporan Troubleshoot...</div>;
   }
   if (isEditMode && currentUser.role !== "superadmin") {
@@ -671,7 +671,9 @@ function TroubleshootFormPage() {
       </div>}
       {Object.keys(errors).length > 0 && <div data-error-summary="true" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-800"><b>Mohon periksa field wajib:</b><ul className="mt-1 list-inside list-disc">{Object.values(errors).map((error) => <li key={error}>{error}</li>)}</ul></div>}
 
+      {deviceOptions.length === 0 && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Tidak ada perangkat yang sedang terpasang pada unit di Site yang dapat diakses akun ini.</div>}
       <form onSubmit={handleSubmit} className="space-y-6">
+        <fieldset disabled={isSaving || isApplyingEdit || submitted} className="space-y-6 min-w-0">
         <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="flex items-center gap-2 border-b border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-800"><FileText className="h-4 w-4 text-blue-600" /> 1. Informasi Laporan</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -686,6 +688,7 @@ function TroubleshootFormPage() {
               <input
                 type="date"
                 value={formData.activityDate}
+                readOnly
                 onChange={(event) => update("activityDate", event.target.value)}
                 className={`${inputClass} mt-1 ${errors.activityDate ? "border-rose-300 bg-rose-50/50" : ""}`}
               />
@@ -724,11 +727,11 @@ function TroubleshootFormPage() {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Tipe Alat Berat</label>
-              <input value={getFleetMasterByUnit(formData.unitNo)?.equipmentType ?? ""} readOnly placeholder="Mengikuti unit terpilih" className={`${readOnlyClass} font-semibold cursor-not-allowed`} />
+              <input value={isEditMode && editingRecord?.deviceId === formData.deviceId ? editingRecord.fleetEquipmentType ?? "" : selectedDevice?.equipmentType ?? ""} readOnly placeholder="Mengikuti unit terpilih" className={`${readOnlyClass} font-semibold cursor-not-allowed`} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">EGI (Model Unit)</label>
-              <input value={getFleetMasterByUnit(formData.unitNo)?.egi ?? ""} readOnly placeholder="Mengikuti unit terpilih" className={`${readOnlyClass} font-semibold cursor-not-allowed`} />
+              <input value={isEditMode && editingRecord?.deviceId === formData.deviceId ? editingRecord.egi ?? "" : selectedDevice?.egi ?? ""} readOnly placeholder={formData.deviceId ? "Belum diisi di master unit" : "Mengikuti unit terpilih"} className={`${readOnlyClass} font-semibold cursor-not-allowed`} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Distrik</label>
@@ -749,6 +752,7 @@ function TroubleshootFormPage() {
               </label>
               <SearchableDropdown
                 id="troubleshoot-tech-select"
+                disabled
                 value={formData.technicianName}
                 options={technicianOptions}
                 placeholder="Pilih Teknisi..."
@@ -771,7 +775,7 @@ function TroubleshootFormPage() {
                 onChange={(event) => {
                   const val = event.target.value;
                   update("startTime", val);
-                  if (val && !formData.activityDate) {
+                  if (val) {
                     update("activityDate", val.slice(0, 10));
                   }
                 }}
@@ -817,19 +821,19 @@ function TroubleshootFormPage() {
           <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800"><Info className="h-4 w-4 shrink-0" />Delapan opsi equipment type mengikuti tipe data prototipe dan masih menunggu konfirmasi kebutuhan bisnis.</div>
           <div>
             <label className="block text-xs font-semibold text-slate-700">Issue <span className="text-rose-500">*</span></label>
-            <textarea rows={3} value={formData.issue} onChange={(event) => update("issue", event.target.value)} className={`${inputClass} mt-1 ${errors.issue ? "border-rose-300 bg-rose-50/50" : ""}`} placeholder="Deskripsikan gangguan yang ditemukan." />
+            <textarea rows={3} maxLength={1000} value={formData.issue} onChange={(event) => update("issue", event.target.value)} className={`${inputClass} mt-1 ${errors.issue ? "border-rose-300 bg-rose-50/50" : ""}`} placeholder="Deskripsikan gangguan yang ditemukan." />
             {errors.issue && (
               <p className="text-[11px] text-rose-600 mt-1">{errors.issue}</p>
             )}
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700">Action taken <span className="text-rose-500">*</span></label>
-            <textarea rows={3} value={formData.actionTaken} onChange={(event) => update("actionTaken", event.target.value)} className={`${inputClass} mt-1 ${errors.actionTaken ? "border-rose-300 bg-rose-50/50" : ""}`} placeholder="Catat tindakan perbaikan yang dilakukan." />
+            <textarea rows={3} maxLength={1000} value={formData.actionTaken} onChange={(event) => update("actionTaken", event.target.value)} className={`${inputClass} mt-1 ${errors.actionTaken ? "border-rose-300 bg-rose-50/50" : ""}`} placeholder="Catat tindakan perbaikan yang dilakukan." />
             {errors.actionTaken && (
               <p className="text-[11px] text-rose-600 mt-1">{errors.actionTaken}</p>
             )}
           </div>
-          <label className="block text-xs font-semibold text-slate-700">Remarks<textarea rows={2} value={formData.remarks} onChange={(event) => update("remarks", event.target.value)} className={`${inputClass} mt-1`} placeholder="Opsional" /></label>
+          <label className="block text-xs font-semibold text-slate-700">Remarks<textarea rows={2} maxLength={1000} value={formData.remarks} onChange={(event) => update("remarks", event.target.value)} className={`${inputClass} mt-1`} placeholder="Opsional" /></label>
         </section>
 
         <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -842,9 +846,9 @@ function TroubleshootFormPage() {
               const hasPhotoError = Boolean(errors[photoErrorKey]);
               return <div key={slot} className={`space-y-3 rounded-xl border p-4 ${hasPhotoError ? "border-rose-400 bg-rose-50/30" : "border-slate-200 bg-slate-50/50"}`}>
                 <h3 className="text-xs font-bold text-slate-800">Foto {title} <span className="text-rose-500">*</span></h3>
-                {photo ? <button type="button" onClick={() => setZoomedPhoto({ title: `Foto ${title}`, url: photo, caption: formData.photoCaptions[slot] })} className="group relative h-44 w-full overflow-hidden rounded-lg border border-slate-300 bg-slate-900"><img src={photo} alt={`Foto ${title}`} className="h-full w-full object-contain transition-transform group-hover:scale-105" /><span className="absolute inset-0 flex items-center justify-center bg-slate-900/40 text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">Perbesar foto</span></button> : <label className="flex h-44 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-white text-center hover:border-blue-400"><Camera className="mb-2 h-5 w-5 text-slate-400" /><span className="text-xs font-semibold text-slate-700">Pilih foto</span><span className="mt-1 text-[10px] text-slate-400">PNG, JPG · Maksimal 5 MB</span><input type="file" accept="image/png,image/jpeg" className="hidden" onChange={(event) => { handlePhoto(slot, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>}
-                {photo && <div className="flex items-center justify-between text-[11px]"><label className="inline-flex cursor-pointer items-center gap-1 font-semibold text-blue-600"><Upload className="h-3 w-3" /> Ganti foto<input type="file" accept="image/png,image/jpeg" className="hidden" onChange={(event) => { handlePhoto(slot, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label><button type="button" onClick={() => removePhoto(slot)} className="text-rose-600">Hapus foto</button></div>}
-                <label className="block text-[10px] font-semibold text-slate-600">Caption (opsional)<input value={formData.photoCaptions[slot]} onChange={(event) => setFormData((current) => ({ ...current, photoCaptions: { ...current.photoCaptions, [slot]: event.target.value } }))} className={`${inputClass} mt-1`} placeholder="" /></label>
+                {photo ? <button type="button" onClick={() => setZoomedPhoto({ title: `Foto ${title}`, url: photo, caption: formData.photoCaptions[slot] })} className="group relative h-44 w-full overflow-hidden rounded-lg border border-slate-300 bg-slate-900"><img src={photo} alt={`Foto ${title}`} className="h-full w-full object-contain transition-transform group-hover:scale-105" /><span className="absolute inset-0 flex items-center justify-center bg-slate-900/40 text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">Perbesar foto</span></button> : <label className="flex h-44 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-white text-center hover:border-blue-400"><Camera className="mb-2 h-5 w-5 text-slate-400" /><span className="text-xs font-semibold text-slate-700">Pilih foto</span><span className="mt-1 text-[10px] text-slate-400">PNG, JPG, WebP · Maksimal 5 MiB</span><input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { handlePhoto(slot, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>}
+                {photo && <div className="flex items-center justify-between text-[11px]"><label className="inline-flex cursor-pointer items-center gap-1 font-semibold text-blue-600"><Upload className="h-3 w-3" /> Ganti foto<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { handlePhoto(slot, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label><button type="button" onClick={() => removePhoto(slot)} className="text-rose-600">Hapus foto</button></div>}
+                <label className="block text-[10px] font-semibold text-slate-600">Caption (opsional)<input maxLength={200} value={formData.photoCaptions[slot]} onChange={(event) => setFormData((current) => ({ ...current, photoCaptions: { ...current.photoCaptions, [slot]: event.target.value } }))} className={`${inputClass} mt-1`} placeholder="" /></label>
                 {hasPhotoError && <p className="text-[11px] font-medium text-rose-600">{errors[photoErrorKey]}</p>}
               </div>;
             })}
@@ -855,6 +859,7 @@ function TroubleshootFormPage() {
           <Link href={isEditMode && editId ? `/support/troubleshoots/${encodeURIComponent(editId)}` : "/support/troubleshoots"} className="rounded-lg border border-slate-200 px-4 py-2 text-center text-xs font-semibold text-slate-700">Batal</Link>
           {submitted ? <button type="button" onClick={() => router.push("/support/troubleshoots")} className="rounded-lg bg-blue-600 px-6 py-2.5 text-xs font-bold text-white">Kembali ke Troubleshoots</button> : <button type="submit" disabled={isApplyingEdit} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-2.5 text-xs font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" /> {isEditMode ? "Simpan Perubahan" : "Submit Troubleshoot"}</button>}
         </div>
+        </fieldset>
       </form>
       {createdRecordId && createPortal(
         <div role="dialog" aria-modal="true" aria-labelledby="troubleshoot-create-success-title" className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-fadeIn">
