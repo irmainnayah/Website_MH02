@@ -16,7 +16,12 @@ const routes: Record<string, readonly string[]> = {
   replacements: ["GET", "POST"],
   removals: ["GET", "POST"],
   troubleshoots: ["GET", "POST"],
+  "activity-log": ["GET", "POST"],
+  timeline: ["GET", "POST"],
+  "audit-logs": ["GET", "POST", "PUT", "PATCH", "DELETE"],
   "dashboard/status-distribution": ["GET"],
+  dashboard: ["GET"],
+  "dashboard/devices": ["GET"],
   users: ["GET", "POST"],
 };
 
@@ -33,8 +38,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const isReplacementDetail = path.length === 2 && path[0] === "replacements" && /^REP-\d{6}-\d{3,}$/i.test(path[1]);
   const isRemovalDetail = path.length === 2 && path[0] === "removals" && /^REM-\d{6}-\d{3,}$/i.test(path[1]);
   const isTroubleshootDetail = path.length === 2 && path[0] === "troubleshoots" && /^TRB-\d{6}-\d{3,}$/i.test(path[1]);
+  const isActivityDetail = path.length === 2 && path[0] === "activity-log" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
+  const isAuditDetail = path.length === 2 && path[0] === "audit-logs" && /^[1-9]\d{0,18}$/.test(path[1]);
+  const isTimelineDevice = path[0] === "timeline" && path.length >= 2 && path[1].length > 0 && path[1].length <= 40 && ![".", ".."].includes(path[1]) && !/[\/\\?#\u0000-\u001f]/.test(path[1]);
+  const isTimelineDetail = isTimelineDevice && path.length === 2;
+  const isTimelineEntry = isTimelineDevice && path.length === 4 && ["activities", "events"].includes(path[2]) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[3]);
   const isPhoto = path.length === 2 && path[0] === "photos" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
-  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && request.method === "GET") || (isPhoto && request.method === "GET") || ((isInstallationDetail || isReplacementDetail || isRemovalDetail || isTroubleshootDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
+  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && request.method === "GET") || (isPhoto && request.method === "GET") || (isAuditDetail && ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(request.method)) || (isTimelineDetail && ["GET", "POST"].includes(request.method)) || (isTimelineEntry && ["PATCH", "DELETE"].includes(request.method)) || ((isInstallationDetail || isReplacementDetail || isRemovalDetail || isTroubleshootDetail || isActivityDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
   }
 
@@ -52,7 +62,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     if (backend.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(backend.hostname) || backend.username || backend.password || backend.pathname !== "/" || backend.search || backend.hash) {
       throw new Error("invalid development backend URL");
     }
-    const target = new URL(`/api/${endpoint}${request.nextUrl.search}`, backend);
+    const target = new URL(`/api/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`, backend);
     const headers = new Headers();
     const cookie = request.headers.get("cookie");
     const contentType = request.headers.get("content-type");
@@ -81,11 +91,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       body,
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.timeout((endpoint === "installations" && request.method === "POST") || ((endpoint === "replacements" || isReplacementDetail || endpoint === "removals" || isRemovalDetail || endpoint === "troubleshoots" || isTroubleshootDetail) && ["POST", "PATCH"].includes(request.method)) ? 120000 : 10000),
+      signal: AbortSignal.timeout((endpoint === "installations" && request.method === "POST") || ((endpoint === "replacements" || isReplacementDetail || endpoint === "removals" || isRemovalDetail || endpoint === "troubleshoots" || isTroubleshootDetail || endpoint === "activity-log" || isActivityDetail || endpoint === "timeline" || isTimelineDetail || isTimelineEntry) && ["POST", "PATCH"].includes(request.method)) ? 120000 : 10000),
     });
     const result = new NextResponse(response.body, { status: response.status });
     result.headers.set("Cache-Control", "no-store");
-    for (const header of ["content-type", "set-cookie", "retry-after", "x-request-id", "idempotency-replayed", "location"]) {
+    for (const header of ["content-type", "set-cookie", "retry-after", "x-request-id", "idempotency-replayed", "location", "allow"]) {
       const value = response.headers.get(header);
       if (value) result.headers.set(header, value);
     }

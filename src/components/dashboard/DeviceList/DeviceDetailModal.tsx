@@ -1,19 +1,24 @@
 // src/components/dashboard/DeviceList/DeviceDetailModal.tsx
 "use client";
 
-import React, { useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { DeviceRecord } from "@/types/dashboard";
-import { getAllEnrichedActivities, getLastActivityDateByDevice } from "@/lib/mock-data";
+import Link from "next/link";
+import { DashboardDevice, getDashboardDeviceHistory } from "@/lib/dashboard-api";
+import { TimelineEntry } from "@/lib/timeline-api";
 import StatusBadge from "@/components/ui/StatusBadge";
 import { X, Calendar, Shield, Truck, MapPin } from "lucide-react";
 
 interface DeviceDetailModalProps {
-  device: DeviceRecord | null;
+  device: DashboardDevice | null;
   onClose: () => void;
 }
 
 export default function DeviceDetailModal({ device, onClose }: DeviceDetailModalProps) {
+  const [deviceActivities, setDeviceActivities] = useState<TimelineEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyTotal, setHistoryTotal] = useState(0);
   // Close on Escape key
   useEffect(() => {
     if (!device) return;
@@ -34,17 +39,18 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
     };
   }, [device]);
 
-  // Gather activities for this device
-  const deviceActivities = useMemo(() => {
-    if (!device) return [];
-    const all = getAllEnrichedActivities();
-    return all.filter((a) => a.deviceId === device.deviceId);
+  useEffect(() => {
+    if (!device) return;
+    const controller = new AbortController();
+    setHistoryLoading(true); setHistoryError(null); setDeviceActivities([]); setHistoryTotal(0);
+    getDashboardDeviceHistory(device.deviceId, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setDeviceActivities(result.items); setHistoryTotal(result.total);
+    }).catch((failure: unknown) => { if (!controller.signal.aborted) setHistoryError(failure instanceof Error ? failure.message : "Gagal memuat riwayat perangkat."); })
+      .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
+    return () => controller.abort();
   }, [device]);
-
-  const lastActivityDate = useMemo(() => {
-    if (!device) return null;
-    return getLastActivityDateByDevice(device.deviceId);
-  }, [device]);
+  const lastActivityDate = device?.lastActivityDate ?? null;
 
   if (!device) return null;
 
@@ -54,6 +60,11 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
       troubleshoot: { label: "Troubleshoot", cls: "bg-amber-50 text-amber-700 border-amber-200" },
       replacement: { label: "Replacement", cls: "bg-violet-50 text-violet-700 border-violet-200" },
       removal: { label: "Removal", cls: "bg-rose-50 text-rose-700 border-rose-200" },
+      registered: { label: "Registrasi", cls: "bg-slate-100 text-slate-700 border-slate-200" },
+      details_updated: { label: "Perubahan Data", cls: "bg-slate-100 text-slate-700 border-slate-200" },
+      transaction_deleted: { label: "Transaksi Dihapus", cls: "bg-rose-50 text-rose-700 border-rose-200" },
+      soft_deleted: { label: "Arsip", cls: "bg-slate-100 text-slate-700 border-slate-200" },
+      device_override: { label: "Koreksi Perangkat", cls: "bg-amber-50 text-amber-700 border-amber-200" },
     };
     const info = map[type] || { label: type, cls: "bg-slate-100 text-slate-700 border-slate-200" };
     return (
@@ -69,6 +80,7 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
       className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in"
       aria-modal="true"
       role="dialog"
+      aria-label={`Detail perangkat ${device.deviceId}`}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -122,6 +134,8 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
                   {device.equipmentType ?? "—"}
                 </p>
               </div>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70"><span className="text-[11px] text-slate-500 font-medium">EGI</span><p className="mt-0.5 text-sm font-semibold text-slate-800">{device.egi ?? "Belum diisi"}</p></div>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70"><span className="text-[11px] text-slate-500 font-medium">Lokasi Fisik</span><p className="mt-0.5 text-sm font-semibold text-slate-800">{device.currentLocation ?? "Belum tercatat"}</p></div>
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70">
                 <span className="text-[11px] text-slate-500 font-medium">Distrik / Site</span>
                 <p className="text-sm font-bold text-slate-800 mt-0.5 flex items-center gap-1.5">
@@ -144,7 +158,7 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
               </span>
             </span>
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-              Mock Record
+              Tersimpan
             </span>
           </div>
 
@@ -152,43 +166,23 @@ export default function DeviceDetailModal({ device, onClose }: DeviceDetailModal
           <div>
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Riwayat Aktivitas ({deviceActivities.length})
+                Riwayat Terbaru ({deviceActivities.length} / {historyTotal})
               </h4>
-              <span className="text-[11px] text-slate-500">Aktivitas terlacak di log</span>
+              <Link href={`/reports/timeline/${encodeURIComponent(device.deviceId)}`} className="text-[11px] font-semibold text-blue-700">Timeline Lengkap</Link>
             </div>
-            {deviceActivities.length === 0 ? (
+            {historyLoading ? <p role="status" className="p-4 text-xs text-slate-500">Memuat riwayat perangkat...</p> : historyError ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{historyError}</p> : deviceActivities.length === 0 ? (
               <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-500">
-                Belum ada catatan aktivitas operasional untuk perangkat ini.
+                Belum ada riwayat tersimpan untuk perangkat ini.
               </div>
             ) : (
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-3 py-2">Tanggal</th>
-                      <th className="px-3 py-2">Jenis Aktivitas</th>
-                      <th className="px-3 py-2">Unit</th>
-                      <th className="px-3 py-2">Teknisi</th>
-                      <th className="px-3 py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {deviceActivities.map((act) => (
-                      <tr key={act.activityId} className="hover:bg-slate-50/70">
-                        <td className="px-3 py-2 tabular-nums text-slate-700">{act.date}</td>
-                        <td className="px-3 py-2">{getActivityTypeBadge(act.type)}</td>
-                        <td className="px-3 py-2 font-medium text-slate-800">{act.unitNo ?? "—"}</td>
-                        <td className="px-3 py-2 text-slate-600">{act.technicianName}</td>
-                        <td className="px-3 py-2">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
-                            {act.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ol className="divide-y divide-slate-200">
+                {deviceActivities.map((entry) => <li key={entry.key} className="space-y-2 py-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">{getActivityTypeBadge(entry.type)}<span className="text-slate-500">{entry.date} {entry.time} ({entry.timeZone})</span></div>
+                  <p className="break-words font-medium text-slate-800">{entry.summary}</p>
+                  <p className="text-slate-500">{entry.formNumber ?? "-"} / {entry.unitNo ?? "Tanpa unit tercatat"} / {entry.technicianName || "Tidak tercatat"}</p>
+                  {entry.detailPath && <Link href={entry.detailPath} className="inline-block font-semibold text-blue-700">Detail Transaksi</Link>}
+                </li>)}
+              </ol>
             )}
           </div>
         </div>

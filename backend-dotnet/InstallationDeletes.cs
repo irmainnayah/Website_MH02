@@ -6,8 +6,11 @@ public static class InstallationDeletes
 {
     public static void Map(WebApplication app, Func<string> getConnectionString)
     {
-        app.MapDelete("/api/installations/{id:guid}", async (HttpContext context, Guid id, CancellationToken cancellationToken) =>
-        {
+        app.MapDelete("/api/installations/{id:guid}", (HttpContext context, Guid id, CancellationToken cancellationToken) => HandleAsync(app, getConnectionString, context, id, cancellationToken));
+    }
+
+    internal static async Task<IResult> HandleAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, Guid id, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -156,7 +159,6 @@ public static class InstallationDeletes
                     : Error(503, "DATABASE_UNAVAILABLE", "Database unavailable.");
             }
                     catch (IOException) { return Error(503, "PHOTO_STORAGE_UNAVAILABLE", "Photo storage unavailable."); }
-        });
     }
 
     private static IResult Error(int status, string code, string message) =>

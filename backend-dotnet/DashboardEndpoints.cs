@@ -5,6 +5,7 @@ public static class DashboardEndpoints
 {
     public static void Map(WebApplication app, Func<string> getConnectionString)
     {
+        DashboardData.Map(app, getConnectionString);
         app.MapGet("/api/dashboard/status-distribution", async (HttpContext context, CancellationToken cancellationToken) =>
         {
             var token = context.Request.Cookies["mh02_session"];

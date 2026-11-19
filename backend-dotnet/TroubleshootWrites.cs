@@ -21,7 +21,7 @@ public static class TroubleshootWrites
         app.MapDelete("/api/troubleshoots/{formNumber}", (HttpContext context, string formNumber, CancellationToken ct) => WriteAsync(app, getConnectionString, context, formNumber, true, ct));
     }
 
-    private static async Task<IResult> WriteAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, string? formNumber, bool delete, CancellationToken ct)
+    internal static async Task<IResult> WriteAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, string? formNumber, bool delete, CancellationToken ct)
     {
         if (!AuthEndpoints.HasAllowedOrigin(context)) return TroubleshootEndpoints.Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
         var token = context.Request.Cookies["mh02_session"];

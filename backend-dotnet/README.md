@@ -8,6 +8,112 @@ Endpoint installation tersedia di `GET /api/installations`, `GET /api/installati
 
 Foto disimpan di `PHOTO_STORAGE_ROOT` atau `.storage` pada root proyek, di luar `public/`; path tersebut harus persisten dan dibackup bersama database. File ditulis sebelum commit dan dibersihkan bila kegagalan sebelum commit diketahui; hasil commit yang tidak pasti mempertahankan file. DELETE khusus Superadmin mencoba memindahkan foto ke `_quarantine` setelah commit. Rekonsiliasi file yatim, pemulihan karantina, dan pembersihan berkala belum tersedia; kegagalan pemindahan hanya dicatat pada log. PATCH khusus Superadmin hanya mendukung metadata dengan `rowVersion`; perubahan perangkat, unit, waktu, atau foto belum didukung. Formulir baru dan detail kini memakai API, sedangkan edit belum terhubung. Endpoint dan penyimpanan foto belum diuji end-to-end dan belum siap digunakan untuk data nyata.
 
+## Dashboard
+
+Halaman utama `/` memakai provider data bersama untuk angka inventaris, grafik status/lokasi/tipe alat, tren enam bulan, ringkasan bulan berjalan, tabel inventaris dan modal perangkat. Komponen dashboard yang aktif tidak lagi memakai mock. Dua komponen prototipe yang tidak dipasang pada halaman utama (`HealthDistributionChart` dan `StockDistributionChart`) tetap di luar integrasi ini; tidak ada checklist PM/health check 19 item baru.
+
+| Metode | Endpoint | Fungsi |
+| --- | --- | --- |
+| GET | `/api/dashboard?siteId=...` | Angka inventaris dan distribusi serta aktivitas bulanan |
+| GET | `/api/dashboard/devices?page=1&pageSize=100&siteId=...` | Inventaris nonarsip dengan tanggal aktivitas terakhir |
+| GET | `/api/dashboard/status-distribution?siteId=...` | Endpoint status lama, tetap tersedia untuk kompatibilitas |
+
+Ketiganya memeriksa cookie sesi dan Site database. Superadmin dapat memilih semua Site atau satu Site; User otomatis dibatasi Site penugasannya. Site yang tidak ada ditolak oleh API baru, bukan dianggap ringkasan nol. Pagination inventaris menerima ukuran 1-1000; frontend membaca seluruh halaman untuk filter dan CSV. Respons tidak di-cache dan query dalam satu respons baru memakai transaksi repeatable-read agar agregat konsisten satu sama lain. Ringkasan dan inventaris adalah request terpisah, bukan satu snapshot lintas request saat ada perubahan bersamaan. Data dimuat saat halaman/filter Site berubah atau tombol muat ulang ditekan; tidak ada klaim sinkronisasi push realtime.
+
+`kpis.registeredDevices` adalah jumlah record perangkat nonarsip dalam scope dan dilabeli Perangkat Tercatat, bukan formula total aset resmi. `totalInstalled` menghitung In Use; `hoRepair` menghitung kondisi In Stock HO; `inStock` mencakup RFU + rusak + butuh repair ke HO. `officialAssetTotal` sengaja null karena formula total aset resmi belum dikonfirmasi. Tidak ada rumus tambahan yang menggabungkan angka-angka saling beririsan sebagai total aset.
+
+Distribusi lokasi memakai `devices.current_location_site_id`, bukan Site kepemilikan sebagai proksi. Lokasi null menjadi Belum tercatat dan tidak dipindahkan otomatis ke HO karena kondisi repair. Scope tetap berdasarkan Site pemilik perangkat. Distribusi tipe alat menghitung perangkat In Use menurut unit yang sedang terhubung, bukan semua fleet unit atau perangkat stok tanpa unit. Perangkat arsip dikecualikan dari jumlah/status/lokasi/alat dan inventaris.
+
+Tren/ringkasan dihitung dari header `activities` yang masih ada, satu transaksi satu hitungan; replacement tidak dihitung dua kali berdasarkan jumlah device. Audit dan lifecycle event bukan sumber hitungan operasional. Transaksi yang dihapus tidak lagi dihitung, sementara jejak penghapusannya tetap di timeline. Bulan aktivitas dihitung memakai `started_at` ditambah snapshot `start_utc_offset_minutes`, bukan UTC mentah atau jam browser. Enam bulan selalu dikembalikan, termasuk bulan tanpa aktivitas dengan nilai nol. Acuan bulan berjalan adalah zona Site untuk scope tunggal dan UTC untuk semua Site, dinyatakan melalui `periodTimeZone`; pengelompokan transaksi tetap menurut bulan lokal tersimpan (`activityGrouping=stored_start_local_month`). Zona Site yang diubah tidak menggeser bulan historis transaksi.
+
+Inventaris menyediakan identitas sebenarnya, status, unit, tipe alat, EGI, Site pemilik, lokasi fisik (nullable), health-check master yang tercatat, dan `lastActivityDate`. Tanggal terakhir adalah tanggal lokal waktu mulai aktivitas terbaru menurut (`started_at`, `created_at`, UUID), bukan tanggal registrasi, event audit, atau fallback mock; bila belum ada transaksi nilainya null. Tabel mempertahankan search, faceted filter kolom, clear, show rows, pagination dan CSV rentang tanggal aktivitas terakhir, dengan escaping CSV. Modal menampilkan identitas/EGI/lokasi serta sepuluh entri timeline terbaru dan tautan ke timeline penuh; tidak mengarang status completed atau hasil inspeksi. Nilai kosong dan kegagalan API berbeda: kegagalan menampilkan error/retry dan menyembunyikan angka lama, sedangkan database kosong menampilkan nol serta state kosong yang sesuai.
+
+### Verifikasi Dashboard
+
+`tests/integration/dashboard-dotnet.mjs` memeriksa autentikasi secara default. Pemeriksaan dengan sesi hanya aktif dengan `DASHBOARD_TEST_READ=development` dan `MH02_TEST_SESSION`; jangan simpan/bagikan token. `DOTNET_TEST_URL` default ke loopback port 5000. Test read-only membandingkan agregat dengan inventaris, total per status/lokasi/alat, kategori lokasi tidak tercatat, scope Site, enam bulan/current month, jumlah transaksi pada Activity Log dan endpoint status lama. Jalankan pada development yang tenang karena data dapat berubah antar request. Contract test memeriksa scope, nonarsip, snapshot lokal bulan, tidak ada mutasi dan tidak ada mock pada widget aktif.
+
+Build serta test unit/integrasi belum dijalankan. Percobaan tanpa cookie menunjukkan API ringkasan/inventaris baru masih 404 dengan `X-Request-Id` backend, sementara endpoint status lama 401: proses .NET aktif perlu dimulai ulang untuk memuat route baru. Uji browser memakai API tiruan memverifikasi render grafik/inventaris, angka record 3/installed 1/HO 1/stock 2, kategori lokasi kosong, riwayat/EGI modal, perubahan Site ke scope record 1/stock 1, empty state alat/aktivitas, serta error API tanpa angka/inventaris lama. Mock browser sudah dibersihkan. Tidak ada data PostgreSQL nyata yang ditulis atau diverifikasi dan tidak ada perintah terminal yang dijalankan oleh Copilot. Diagnostik editor bukan pengganti build/test integrasi.
+
+## Audit Logs
+
+`/reports/audit-logs` membaca `audit_log` PostgreSQL melalui API .NET, bukan mock sesi. **Audit adalah append-only sesuai desain bagian 3.15 dan trigger database.** INSERT audit tetap dilakukan otomatis dalam transaksi database yang sama dengan perubahan data asal. Tidak ada endpoint untuk membuat bukti audit manual, mengeditnya, menghapusnya, atau menghapus seluruh riwayat; pembatasan ini berlaku juga bagi Superadmin.
+
+| Metode | Endpoint | Fungsi |
+| --- | --- | --- |
+| GET | `/api/audit-logs` | Daftar metadata audit sesuai Site scope |
+| GET | `/api/audit-logs/{auditId}` | Detail metadata serta nilai sebelum/sesudah yang disaring |
+| POST/PUT/PATCH/DELETE | `/api/audit-logs` atau `/api/audit-logs/{auditId}` | Ditolak 405 `AUDIT_APPEND_ONLY` untuk sesi yang sah dan entri yang terlihat |
+
+Penolakan write tetap memeriksa sesi, origin dan scope. Tanpa sesi mendapat 401; entri detail yang tidak ada atau di luar Site mendapat 404; tidak ada body request yang ditulis ke database. Header `Allow: GET` menjelaskan metode yang tersedia. Koreksi data dilakukan melalui modul asal dan menghasilkan audit baru, bukan mengubah audit lama. Proteksi database dan pencatatan audit pada transaksi asal tidak diubah.
+
+GET list mendukung `page`, `pageSize` (1-1000), `siteId`, `table` (`installation`, `replacement`, `removal`, `troubleshoot`, `device`, `user_management`), `operation` (`INSERT`, `UPDATE`, `DELETE`), `action`, `changeGroupId`, `dateFrom`, `dateTo` (`yyyy-MM-dd` dalam UTC), serta `q` (maksimal 120 karakter). Pencarian backend mencakup record, pelaksana, action, request ID, reason dan IP. User hanya melihat `audit_log.site_id` milik Site-nya; Superadmin dapat melihat semua atau meminta Site tertentu. Audit global dengan Site null tidak terlihat pada User biasa. Urutan stabil memakai `occurred_at DESC, audit_id DESC`.
+
+Audit ID BIGINT dikirim sebagai string agar tidak kehilangan presisi JavaScript. Respons memuat timestamp UTC, record/entity, pelaksana yang tercatat, Site, operation/action, IP, request ID dan change group. Nilai null ditampilkan sebagai tidak tersedia/global yang tidak tercatat; nama pelaksana dan IP tidak dikarang. List tidak memuat payload before/after; keduanya hanya diambil oleh GET detail. Field dengan nama yang mengandung password/pass/hash/secret/token/credential/connectionstring/activationcode/totp/apikey dihapus secara rekursif dari object dan array sebelum dikirim. Ini pertahanan pada pembacaan, bukan pengganti larangan menyimpan rahasia saat penulisan audit.
+
+Tautan data asal dicari dengan immutable `entity_id`, bukan `record_id` yang dapat berubah. Transaksi yang masih ada menuju detail Activity Log; device yang masih terlihat menuju timeline kode perangkat saat ini. Tidak ada tautan ke transaksi yang sudah dihapus atau arsip device yang tidak terlihat oleh User. Halaman menyediakan search, filter per kolom, clear filter, show rows, pagination, refresh, dan CSV rentang tanggal UTC. Semua halaman metadata dibaca agar ekspor tidak terpotong pada 1000 baris. Detail readonly menampilkan before/after, reason, request ID dan change group. Tidak diperlukan seed audit palsu; jalankan perubahan data yang sah pada modul asal untuk menghasilkan audit.
+
+### Verifikasi Audit Logs
+
+`tests/integration/audit-logs-dotnet.mjs` memeriksa autentikasi GET dan metode write yang ditolak secara default. Pemeriksaan dengan sesi hanya aktif dengan `AUDIT_LOG_TEST_READ=development` dan `MH02_TEST_SESSION`; jangan simpan/bagikan token. `DOTNET_TEST_URL` default ke loopback port 5000. Test menggunakan audit yang sudah ada, tanpa membuat fixture audit: list/detail, Site scope, UTC/filter tanggal, change group, redaction rekursif, 405 pada penulisan manual dan baris audit tidak berubah. Detail test dilewati bila belum ada entri yang terlihat. Contract test memeriksa larangan SQL mutasi audit, perlindungan trigger, scope, redaction, ID string dan join entity.
+
+Build dan test unit/integrasi belum dijalankan. Percobaan HTTP tanpa cookie lewat proxy mendapat 404 dengan `X-Request-Id` backend untuk kelima route/metode yang diperiksa: proses .NET aktif belum memuat endpoint baru dan perlu dimulai ulang. Uji browser dengan API tiruan memverifikasi render tabel, tautan device, detail readonly, before/after, request ID, UTC, dan Audit ID `9007199254740993` tanpa kehilangan presisi; tidak ada tombol mutasi audit. Mock browser sudah dibersihkan. Tidak ada query insert atau perintah terminal yang dijalankan oleh Copilot. Diagnostik editor bukan pengganti build/test integrasi.
+
+## Device Timeline
+
+Directory `/reports/timeline` dan detail `/reports/timeline/{deviceCode}` (contoh `/reports/timeline/D001`) membaca PostgreSQL melalui API .NET, tanpa fallback mock. `deviceCode` adalah kode nyata `devices.device_code`, bukan UUID dan bukan ID dummy; kode yang tidak ada/tidak terlihat menghasilkan 404. Header menampilkan master saat ini, sedangkan setiap transaksi memakai unit/status historis dari snapshot. Unit historis tidak dipakai sebagai fallback unit aktif di header.
+
+| Metode | Endpoint | Fungsi |
+| --- | --- | --- |
+| GET | `/api/timeline` | Directory perangkat aktif dalam scope Site pengguna |
+| GET | `/api/timeline/{deviceCode}` | Master perangkat dan gabungan kronologi aktivitas/event |
+| POST | `/api/timeline/{deviceCode}?activityType=...` | Tambah transaksi yang melibatkan device tersebut |
+| POST | `/api/timeline?deviceCode=D001&activityType=...` | Varian insert dari directory |
+| PATCH | `/api/timeline/{deviceCode}/activities/{activityId}` | Update transaksi asal; khusus Superadmin |
+| DELETE | `/api/timeline/{deviceCode}/activities/{activityId}` | Delete transaksi asal dengan guard/rollback; khusus Superadmin |
+| PATCH/DELETE | `/api/timeline/{deviceCode}/events/{eventId}` | Ditolak 405 `HISTORY_IMMUTABLE` setelah pemeriksaan sesi dan visibilitas device |
+
+Directory mendukung `page`, `pageSize` (1-1000), `siteId`, `q` (kode, serial, unit), `status`, dan `archived=true` khusus Superadmin. Secara default perangkat arsip tidak tampil. Detail memakai kode case-sensitive sesuai master, mendukung `page`, `pageSize`, `q` (nomor form/ringkasan/keterangan), `dateFrom`, `dateTo` (`yyyy-MM-dd`). User hanya dapat melihat device pada Site sendiri yang tidak diarsipkan; Superadmin dapat membuka timeline perangkat arsip. `siteId` yang diminta tetap diperiksa terhadap scope sesi.
+
+Kronologi dibentuk oleh tepat dua sumber: `activity_devices` join `activities` dengan key `A:{activity_id}:{device_id}`, dan `device_events` dengan key `E:{event_id}`. `audit_log` bukan sumber timeline, sehingga audit dan aktivitas tidak diduplikasi. Replacement tampil sekali pada masing-masing device yang terlibat, dengan role lama/baru. Penghapusan transaksi menghilangkan entri `A:` dan menyimpan satu event `transaction_deleted` per device; event menyimpan nomor form, jenis, role, waktu lokal asal dan zona asal walaupun aktivitas sudah tidak ada. Event diurutkan pada waktu penghapusan, bukan waktu aktivitas asal. Urutan gabungan adalah UTC `started_at`/`occurred_at`, lalu `created_at`, lalu key secara menurun. Timestamp aktivitas memakai offset/zona yang disimpan; timestamp lifecycle event memakai zona Site perangkat.
+
+POST/PATCH meneruskan body dan header ke handler transaksi asal melalui Activity Log; kontrak JSON/multipart, foto, `Idempotency-Key` saat POST, `rowVersion` saat PATCH, validasi status/unit, audit dan hasil commit mengikuti modul asal. POST harus memiliki `deviceCode` payload yang sama dengan timeline; untuk replacement, device harus muncul sebagai `oldDeviceCode` atau `newDeviceCode`. Ketidakcocokan ditolak dengan `DEVICE_MISMATCH`. PATCH/DELETE memeriksa `activity_devices` agar transaksi UUID benar-benar berada di timeline device tersebut; transaksi milik device lain menghasilkan 404. Body JSON dibuffer dan multipart dibaca dari form cache agar pemeriksaan device tidak menghabiskan body sebelum handler asal. Batas ukuran mengikuti jenis transaksi. Device arsip menolak perubahan. Tidak ada SQL mutasi master, activities atau lifecycle event yang ditulis terpisah pada handler timeline.
+
+Event registrasi, perubahan detail perangkat, archive, override, dan transaksi dihapus tetap append-only. API timeline tidak menghapus device, menghapus audit, membuat event manual, atau menyediakan bulk delete riwayat. Pembatasan edit modul asal tetap berlaku, termasuk installation yang hanya mendukung metadata. CRUD di timeline berarti mengelola transaksi yang membentuk riwayat; ketika transaksi dihapus, jejak event penghapusan tetap ada.
+
+Frontend directory mendukung search, filter Site/status/arsip, clear filter, pilihan jumlah perangkat dan pagination. Detail memiliki search, filter jenis, rentang tanggal, pagination dan CSV sesuai filter. Statistik aktivitas tidak mencampur event lifecycle. Detail transaksi mengarah ke Activity Log berdasarkan UUID yang benar. Superadmin mendapat tautan edit dan konfirmasi hapus 5 detik pada entri aktivitas, bukan event; hasil delete memuat ulang master dan kronologi. Tambah Aktivitas membuka form transaksi lengkap, bukan membuat baris event kosong. Tidak ada seed timeline khusus: riwayat berasal dari transaksi dan registrasi perangkat yang sudah tersimpan.
+
+### Verifikasi Timeline
+
+`tests/integration/timeline-dotnet.mjs` memeriksa autentikasi route secara default. Alur tulis hanya aktif dengan `TIMELINE_TEST_WRITE=development-fixture` dan sesi Superadmin pada environment `MH02_TEST_SESSION`; jangan simpan/bagikan token. `DOTNET_TEST_URL` default ke loopback port 5000. Fixture memakai perangkat dari `009_troubleshoot_development_seed.sql`. Test mencakup device mismatch, create/replay, satu key `A:`, penolakan edit/delete event, penolakan transaksi milik device lain, update ke handler asal, stale version, dan perubahan satu aktivitas menjadi tepat satu event penghapusan tanpa perubahan master. Audit/event append-only, sequence, idempotency key dan karantina tetap tersimpan. Contract test memeriksa dua sumber, key/order, scope, delegasi dan larangan SQL mutasi event.
+
+Build dan test unit/integrasi belum dijalankan. Percobaan HTTP tanpa cookie lewat proxy mendapat 404 dengan `X-Request-Id` backend untuk seluruh route yang diperiksa: proses .NET aktif belum memuat endpoint baru dan perlu dimulai ulang. Uji browser memakai API tiruan memverifikasi directory ke `/reports/timeline/D001`, header tanpa unit aktif, unit historis, WITA, event penghapusan yang tidak memiliki tombol hapus, serta tidak adanya edit/delete bagi User biasa. Mock browser sudah dibersihkan. Tidak ada transaksi database nyata atau perintah terminal yang dijalankan oleh Copilot; diagnostik editor bukan pengganti build/test integrasi.
+
+## Activity Log
+
+`/reports/activity-log` membaca PostgreSQL melalui API .NET, bukan gabungan mock di browser. Detail tersedia di `/reports/activity-log/{activityId}`. Satu baris mewakili satu transaksi, termasuk replacement dengan dua device; unit berasal dari transaksi, bukan assignment master device saat ini. Tanggal dan waktu memakai offset/zona Site yang disimpan, bukan WIB tetap. Tidak ada tabel log duplikat dan tidak ada seed Activity Log tersendiri.
+
+| Metode | Endpoint | Fungsi |
+| --- | --- | --- |
+| GET | `/api/activity-log` | Semua jenis transaksi dalam scope Site pengguna |
+| GET | `/api/activity-log/{activityId}` | Header, detail transaksi, snapshot semua device dan foto |
+| POST | `/api/activity-log?activityType=installation` | Insert melalui handler jenis transaksi yang dipilih |
+| PATCH | `/api/activity-log/{activityId}` | Update transaksi asal; khusus Superadmin |
+| DELETE | `/api/activity-log/{activityId}` | Delete transaksi asal; khusus Superadmin |
+
+`activityId` adalah UUID `activities.activity_id`, bukan nomor form. GET list mendukung `page`, `pageSize` (1-1000), `siteId`, `activityType` (`installation`, `replacement`, `removal`, `troubleshoot`), `dateFrom`, `dateTo` (`yyyy-MM-dd`), dan `q` (maksimal 120 karakter). Tanpa filter jenis, keempat jenis tampil. Pencarian backend mencakup nomor form, kode device, unit, teknisi dan remarks. Aktivitas historis tetap terlihat sesuai Site walaupun device sudah diarsipkan. Respons mencakup `transactionPath` serta `editPath` bila form edit asal tersedia. Tabel frontend mendukung search, filter kolom, clear, show rows, pagination, dan CSV rentang tanggal; seluruh halaman API dibaca agar ekspor tidak terpotong pada 1000 baris.
+
+POST mewajibkan query `activityType` dan meneruskan body/header yang sama ke handler transaksi asal; bukan menambahkan baris kosong ke Activity Log. `Idempotency-Key`, jenis content type, foto wajib, validasi status/unit, zona waktu, nomor form, audit dan hasil commit mengikuti kontrak modul asal di bawah. Installation mendukung JSON atau multipart; jenis lainnya multipart. Header `Location` dan `formNumber` pada respons menunjuk transaksi asal. Di UI, menu Tambah Aktivitas membuka form asal agar semua field transaksi tetap lengkap.
+
+PATCH/DELETE menentukan jenis transaksi dari UUID yang dicari di database, bukan dari tipe yang dikirim client. Handler asli dipakai bersama, tanpa internal HTTP request, sehingga Site scope, role, rowVersion, pemeriksaan riwayat, audit, idempotensi dan rollback tidak disalin atau dilewati. PATCH installation tetap metadata JSON dengan `rowVersion`; replacement tetap metadata/foto; removal dan troubleshoot mengikuti batas edit masing-masing. Kapabilitas edit tidak diperluas hanya karena diakses lewat laporan. DELETE menghapus transaksi asal dan memulihkan state perangkat bila handler asal mensyaratkannya; dapat ditolak jika device berubah/diarsipkan atau ada transaksi lanjutan. Audit/event penghapusan tetap disimpan. Ini bukan API untuk mengubah atau menghapus `audit_log`.
+
+Detail UI menyediakan header, unit/EGI, waktu/durasi, personel, detail per jenis, snapshot sebelum/sesudah dan foto dengan lightbox. Superadmin mendapat Edit Metadata dan Hapus; form metadata memakai opsi shift/GL dari reference Site. Tombol Edit Transaksi membuka form asal bila didukung. Penyimpanan metadata menggunakan PATCH terpadu dengan `rowVersion` terakhir dan mempertahankan foto lama. Untuk edit penuh/foto, gunakan form asal. User biasa tidak mendapat kontrol tulis tersebut.
+
+### Verifikasi Activity Log
+
+`tests/integration/activity-log-dotnet.mjs` memeriksa autentikasi kelima route secara default. Alur tulis hanya aktif dengan `ACTIVITY_LOG_TEST_WRITE=development-fixture` dan sesi Superadmin pada environment `MH02_TEST_SESSION`; jangan simpan/bagikan token. `DOTNET_TEST_URL` default ke loopback port 5000. Fixture memakai Site/device dari `009_troubleshoot_development_seed.sql`. Test mencakup create/replay lewat facade, tidak ada duplikasi Activity Log, detail/foto/snapshot dan WITA, PATCH yang terlihat pada endpoint asal, stale version, DELETE pada kedua tampilan, serta master device tetap sama. Audit/event append-only, sequence, idempotency key dan karantina tetap tersimpan. Contract test memastikan facade mendelegasikan ke seluruh handler asal tanpa SQL mutasi sendiri.
+
+Build serta test unit/integrasi belum dijalankan. Percobaan HTTP tanpa cookie melalui proxy mendapat 404 dengan `X-Request-Id` backend untuk kelima route: proses .NET aktif belum memuat endpoint baru dan perlu dimulai ulang. Uji browser dengan API tiruan memverifikasi render tabel/detail, waktu WITA, snapshot unit, foto termuat dan pembukaan editor metadata; simulasi pengisian/simpan belum berhasil diverifikasi karena otomasi interaksi tab tidak konsisten. Semua mock browser sudah dibersihkan. Tidak ada transaksi database nyata atau perintah terminal yang dijalankan oleh Copilot. Diagnostik editor bukan pengganti build/test integrasi.
+
 ## Troubleshoot
 
 Daftar, detail, tambah dan edit `/support/troubleshoots` memakai API .NET tanpa fallback mock. Proxy Next hanya tersedia pada development.

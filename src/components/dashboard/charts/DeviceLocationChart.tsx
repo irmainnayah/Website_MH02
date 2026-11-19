@@ -12,15 +12,13 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { getDeviceLocationDistributionData } from "@/lib/mock-data";
-// import { devices } from "@/lib/mock-data"; // removed: not needed for district aggregation
-// import { DeviceRecord } from "@/types/dashboard"; // removed: not needed for district aggregation
+import { useDashboardData } from "../DashboardDataProvider";
 import { MapPin, Info } from "lucide-react";
 
 export default function DeviceLocationChart() {
   const [isMounted, setIsMounted] = useState(false);
-  const data = getDeviceLocationDistributionData();
-  // Semua entri dihitung (tidak ada kategori "Belum Dipastikan" lagi)
+  const { summary } = useDashboardData();
+  const data = summary?.locationDistribution ?? [];
   const totalDevices = data.reduce((acc, curr) => acc + curr.total, 0);
 
   useEffect(() => {
@@ -44,7 +42,7 @@ export default function DeviceLocationChart() {
               <MapPin className="h-4 w-4 text-blue-600" />
               Distribusi Perangkat per Lokasi
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                Mock Data
+                Lokasi Fisik
               </span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -59,7 +57,7 @@ export default function DeviceLocationChart() {
         </div>
 
         <div className="h-72 w-full mt-3">
-          <ResponsiveContainer width="100%" height="100%">
+          {totalDevices === 0 ? <div className="flex h-full items-center justify-center text-xs text-slate-500">Belum ada perangkat tercatat.</div> : <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={data}
               layout="vertical"
@@ -68,7 +66,7 @@ export default function DeviceLocationChart() {
               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
               <XAxis
                 type="number"
-                domain={[0, 20]}
+                domain={[0, "auto"]}
                 allowDecimals={false}
                 tick={{ fontSize: 11, fill: "#64748b" }}
               />
@@ -80,7 +78,7 @@ export default function DeviceLocationChart() {
                 axisLine={{ stroke: "#e2e8f0" }}
               />
               <Tooltip
-                formatter={(value: any, name: any) => [`${value} unit`, name]}
+                formatter={(value, name) => [`${value} unit`, name]}
                 labelFormatter={(label) => {
                   const item = data.find((d) => d.location === label);
                   return `${label} (Total: ${item?.total ?? 0} unit)`;
@@ -120,13 +118,13 @@ export default function DeviceLocationChart() {
               />
               <Bar
                 dataKey="hoRepair"
-                name="HO Repair (di Site)"
+                name="Butuh Repair ke HO"
                 stackId="status"
                 fill="#ef4444"
                 radius={[0, 4, 4, 0]}
               />
             </BarChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer>}
         </div>
       </div>
 
@@ -135,8 +133,7 @@ export default function DeviceLocationChart() {
         <div>
           <span className="font-semibold text-slate-800">Catatan Data: </span>
           <span>
-            <em>HO Repair</em> (D022–D025) dikonfirmasi tetap di site — kerusakan ringan ditangani di site tanpa pengiriman ke Head Office.
-            Lokasi <em>RFU</em> mengikuti field <code>district</code> sebagai proksi terbaik yang tersedia; data saat ini belum membedakan RFU stok baru di Head Office vs RFU idle di site.
+            Lokasi fisik yang belum diisi dikelompokkan sebagai Belum tercatat. Kondisi Butuh Repair ke HO tidak otomatis berarti perangkat berada di Head Office.
           </span>
 
         </div>

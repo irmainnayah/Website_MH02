@@ -2,15 +2,16 @@
 "use client";
 
 import React, { useState, useMemo, useCallback } from "react";
-import { devices as initialDevices, getLastActivityDateByDevice } from "@/lib/mock-data";
-import { DeviceRecord } from "@/types/dashboard";
+import { DashboardDevice } from "@/lib/dashboard-api";
+import { useDashboardData } from "../DashboardDataProvider";
 import FilterBar from "./FilterBar";
-import DeviceTable from "./DeviceTable";
+import DeviceTable, { DEVICE_COLUMNS, DeviceColumn } from "./DeviceTable";
 import Pagination from "./Pagination";
 import DeviceDetailModal from "./DeviceDetailModal";
 import { HardDrive } from "lucide-react";
 
 export default function DeviceList() {
+  const { devices: initialDevices } = useDashboardData();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [districtFilter, setDistrictFilter] = useState("all");
@@ -19,7 +20,8 @@ export default function DeviceList() {
   const [dateError, setDateError] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedDevice, setSelectedDevice] = useState<DeviceRecord | null>(null);
+  const [selectedDevice, setSelectedDevice] = useState<DashboardDevice | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<DeviceColumn, string>>>({});
 
   const handleStartDateChange = (val: string) => {
     setStartDate(val);
@@ -52,10 +54,10 @@ export default function DeviceList() {
   const deviceLastActivityMap = useMemo(() => {
     const map = new Map<string, string | null>();
     initialDevices.forEach((d) => {
-      map.set(d.deviceId, getLastActivityDateByDevice(d.deviceId));
+      map.set(d.deviceId, d.lastActivityDate);
     });
     return map;
-  }, []);
+  }, [initialDevices]);
 
   const getLastActivity = useCallback(
     (deviceId: string) => deviceLastActivityMap.get(deviceId) ?? null,
@@ -65,6 +67,9 @@ export default function DeviceList() {
   // Filter devices
   const filteredDevices = useMemo(() => {
     return initialDevices.filter((device) => {
+      for (const column of DEVICE_COLUMNS) {
+        if (columnFilters[column.key] && String(device[column.key] ?? "") !== columnFilters[column.key]) return false;
+      }
       // Search matches deviceId, serialNumber, or unitNo
       const query = searchQuery.toLowerCase().trim();
       if (query) {
@@ -100,7 +105,7 @@ export default function DeviceList() {
 
       return true;
     });
-  }, [searchQuery, statusFilter, districtFilter, startDate, endDate, deviceLastActivityMap]);
+  }, [initialDevices, searchQuery, statusFilter, districtFilter, startDate, endDate, deviceLastActivityMap, columnFilters]);
 
   // Pagination calculation
   const totalItems = filteredDevices.length;
@@ -116,6 +121,7 @@ export default function DeviceList() {
     searchQuery ||
     statusFilter !== "all" ||
     districtFilter !== "all" ||
+    Object.values(columnFilters).some(Boolean) ||
     startDate ||
     endDate
   );
@@ -124,6 +130,7 @@ export default function DeviceList() {
     setSearchQuery("");
     setStatusFilter("all");
     setDistrictFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setDateError(null);
@@ -160,9 +167,13 @@ export default function DeviceList() {
       deviceLastActivityMap.get(d.deviceId) ?? "-",
     ]);
 
+    const csvCell = (value: string) => {
+      const safe = /^[=+@\-\t\r]/.test(value) ? `'${value}` : value;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const csvContent =
       "\uFEFF" +
-      [headers.join(","), ...rows.map((row) => row.map((cell) => `"${cell}"`).join(","))].join("\r\n");
+      [headers.map(csvCell).join(","), ...rows.map((row) => row.map(csvCell).join(","))].join("\r\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -198,7 +209,7 @@ export default function DeviceList() {
                 Daftar Inventaris Perangkat (SMARTD DISPLAY)
               </h3>
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                Mock Data
+                {initialDevices.length} perangkat
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -210,6 +221,7 @@ export default function DeviceList() {
 
       {/* Filter and Search Bar */}
       <FilterBar
+        districtOptions={Array.from(new Set(initialDevices.map((device) => device.district))).sort()}
         searchQuery={searchQuery}
         onSearchChange={(q) => {
           setSearchQuery(q);
@@ -239,6 +251,9 @@ export default function DeviceList() {
 
       {/* Device Table */}
       <DeviceTable
+        allDevices={initialDevices}
+        columnFilters={columnFilters}
+        onColumnFilterChange={(key, value) => { setColumnFilters((previous) => ({ ...previous, [key]: value })); setCurrentPage(1); }}
         devices={paginatedDevices}
         onSelectDevice={(device) => setSelectedDevice(device)}
         onResetFilters={handleResetFilters}

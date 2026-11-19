@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useSyncExternalStore } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   Search,
@@ -21,17 +22,22 @@ import {
   ChevronRight,
   ChevronsRight,
 } from "lucide-react";
-import { getAllEnrichedActivities, devices as allDevices } from "@/lib/mock-data";
-import { getTroubleshootRecords, subscribeToTroubleshootRecords } from "@/lib/mock-data/troubleshoots";
-import { getReplacementRecords, subscribeToReplacementRecords } from "@/lib/mock-data/replacement";
-import { ActivityRecord, ActivityType, DistrictName } from "@/types/dashboard";
+import { ActivityType } from "@/types/dashboard";
+import { ActivityLogItem, getActivityLog } from "@/lib/activity-log-api";
 
-const DISTRICTS: DistrictName[] = [
-  "Sangatta",
-  "Bengalon",
-  "Wahau",
-  "Sangatta Utara",
-];
+const NEW_PATHS: Record<ActivityType, string> = {
+  installation: "/operations/installation/new", replacement: "/operations/replacement/new",
+  removal: "/operations/removal/new", troubleshoot: "/support/troubleshoots/new",
+};
+
+function resolveUnitNo(item: { unitNo: string }): string { return item.unitNo?.trim() || "-"; }
+
+const FILTER_COLUMNS = [
+  { key: "date", label: "Tanggal" }, { key: "deviceId", label: "Device" }, { key: "unitNo", label: "Unit Number" },
+  { key: "type", label: "Activity Type" }, { key: "summary", label: "Summary" }, { key: "technicianName", label: "Teknisi" },
+  { key: "district", label: "Site" }, { key: "durationFormatted", label: "Durasi" },
+] as const;
+type FilterColumn = typeof FILTER_COLUMNS[number]["key"];
 
 const ACTIVITY_TYPES: { key: ActivityType | "all"; label: string }[] = [
   { key: "all", label: "Semua Jenis Aktivitas" },
@@ -52,51 +58,24 @@ function activityTypeLabel(type: string): string {
 }
 
 export default function ActivityLogPage() {
-  const troubleshootRecords = useSyncExternalStore(
-    subscribeToTroubleshootRecords,
-    getTroubleshootRecords,
-    getTroubleshootRecords
-  );
-  const replacementRecords = useSyncExternalStore(
-    subscribeToReplacementRecords,
-    getReplacementRecords,
-    getReplacementRecords
-  );
-
-  // Map of deviceId to master unitNo for reliable fallback resolution
-  const deviceUnitMap = useMemo(() => {
-    const map = new Map<string, string>();
-    allDevices.forEach((d) => {
-      if (d.unitNo) {
-        map.set(d.deviceId.toLowerCase(), d.unitNo);
-      }
-    });
-    return map;
+  const router = useRouter();
+  const [operationalActivities, setOperationalActivities] = useState<ActivityLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const DISTRICTS = Array.from(new Set(operationalActivities.map((item) => item.district))).sort();
+  useEffect(() => {
+    let active = true;
+    getActivityLog().then((items) => { if (active) setOperationalActivities(items); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Activity Log."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
-
-  const resolveUnitNo = React.useCallback(
-    (item: { unitNo: string | null; deviceId: string }): string => {
-      if (item.unitNo && item.unitNo.trim() !== "" && item.unitNo !== "-") {
-        return item.unitNo;
-      }
-      const fromMaster = deviceUnitMap.get(item.deviceId.toLowerCase());
-      return fromMaster || "—";
-    },
-    [deviceUnitMap]
-  );
-
-  // 1. Operational activities
-  const operationalActivities = useMemo(() => {
-    // The two store snapshots are render dependencies for dynamically aggregated activities.
-    void troubleshootRecords;
-    void replacementRecords;
-    return getAllEnrichedActivities();
-  }, [troubleshootRecords, replacementRecords]);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [districtFilter, setDistrictFilter] = useState<string>("all");
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterColumn, string>>>({});
 
   // Date Range state
   const [startDate, setStartDate] = useState<string>("");
@@ -107,9 +86,6 @@ export default function ActivityLogPage() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [troubleshootRecords, replacementRecords]);
 
   // Alert message for export
   const [alertMessage, setAlertMessage] = useState<{
@@ -164,6 +140,9 @@ export default function ActivityLogPage() {
   // Filtered dataset derived strictly from operationalActivities
   const filteredActivities = useMemo(() => {
     return operationalActivities.filter((item) => {
+      for (const column of FILTER_COLUMNS) {
+        if (columnFilters[column.key] && String(item[column.key] ?? "") !== columnFilters[column.key]) return false;
+      }
       const resolvedUnit = resolveUnitNo(item);
 
       // 1. Text Search (Device ID or Unit Number or Technician or Summary)
@@ -173,7 +152,7 @@ export default function ActivityLogPage() {
         const matchUnit = resolvedUnit.toLowerCase().includes(q);
         const matchTech = item.technicianName.toLowerCase().includes(q);
         const matchSummary = (item.summary || "").toLowerCase().includes(q);
-        const matchActId = item.activityId.toLowerCase().includes(q);
+        const matchActId = item.formNumber.toLowerCase().includes(q) || item.activityId.toLowerCase().includes(q);
         const matchDate = item.date.toLowerCase().includes(q);
 
         if (!matchDev && !matchUnit && !matchTech && !matchSummary && !matchActId && !matchDate) {
@@ -197,7 +176,7 @@ export default function ActivityLogPage() {
 
       return true;
     });
-  }, [operationalActivities, searchQuery, typeFilter, districtFilter, startDate, endDate, dateError, resolveUnitNo]);
+  }, [operationalActivities, searchQuery, typeFilter, districtFilter, startDate, endDate, dateError, columnFilters]);
 
   // Pagination Calculations
   const totalItems = filteredActivities.length;
@@ -213,6 +192,7 @@ export default function ActivityLogPage() {
     searchQuery.trim() !== "" ||
     typeFilter !== "all" ||
     districtFilter !== "all" ||
+    Object.values(columnFilters).some(Boolean) ||
     startDate !== "" ||
     endDate !== "";
 
@@ -220,6 +200,7 @@ export default function ActivityLogPage() {
     setSearchQuery("");
     setTypeFilter("all");
     setDistrictFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setDateError(null);
@@ -228,6 +209,7 @@ export default function ActivityLogPage() {
 
   // Export to CSV (resolves Unit Number cleanly)
   const handleExportCSV = () => {
+    if (dateError) { showAlert(dateError, "error"); return; }
     if (filteredActivities.length === 0) {
       showAlert("Tidak ada data aktivitas yang sesuai untuk diekspor.", "error");
       return;
@@ -247,21 +229,25 @@ export default function ActivityLogPage() {
     ];
 
     const rows = filteredActivities.map((a) => [
-      a.activityId,
-      `"${a.date}${a.time ? ` ${a.time}` : ""}"`,
+      a.formNumber,
+      `${a.date} ${a.time} ${a.timeZoneLabel}`,
       a.deviceId,
-      `"${resolveUnitNo(a)}"`,
-      `"${activityTypeLabel(a.type)}"`,
-      `"${(a.summary || "").replace(/"/g, '""')}"`,
-      `"${a.technicianName.replace(/"/g, '""')}"`,
+      resolveUnitNo(a),
+      activityTypeLabel(a.type),
+      a.summary || "",
+      a.technicianName,
       a.district,
-      `"${a.durationFormatted || "-"}"`,
+      a.durationFormatted || "-",
       a.status || "-",
     ]);
 
+    const csvCell = (value: string) => {
+      const safe = /^[=+@\-\t\r]/.test(value) ? `'${value}` : value;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const csvContent =
       "\uFEFF" +
-      [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+      [headers.map(csvCell).join(","), ...rows.map((row) => row.map(csvCell).join(","))].join("\r\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -282,6 +268,7 @@ export default function ActivityLogPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {(loading || loadError) && <div role={loadError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${loadError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{loadError ?? "Memuat Activity Log..."}</div>}
       {/* Alert Notification */}
       {alertMessage && (
         <div
@@ -322,6 +309,10 @@ export default function ActivityLogPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <select aria-label="Tambah aktivitas" defaultValue="" onChange={(event) => { const path = NEW_PATHS[event.target.value as ActivityType]; if (path) router.push(path); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+            <option value="" disabled>Tambah Aktivitas</option>
+            {ACTIVITY_TYPES.filter((item) => item.key !== "all").map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+          </select>
           <Link
             href="/operations/installation"
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
@@ -562,6 +553,15 @@ export default function ActivityLogPage() {
                 <th className="py-3 px-4">Duration</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                {FILTER_COLUMNS.map((column) => <th key={column.key} className="px-4 pb-2 font-normal">
+                  <select aria-label={`Filter ${column.label}`} value={columnFilters[column.key] ?? ""} onChange={(event) => { setColumnFilters((previous) => ({ ...previous, [column.key]: event.target.value })); setCurrentPage(1); }} className="w-full max-w-40 rounded border border-slate-200 bg-white px-1 py-1 text-[11px] font-normal text-slate-600">
+                    <option value="">Semua</option>
+                    {Array.from(new Set(operationalActivities.map((item) => String(item[column.key] ?? "")))).filter(Boolean).sort().map((value) => <option key={value} value={value}>{column.key === "type" ? activityTypeLabel(value) : value}</option>)}
+                  </select>
+                </th>)}
+                <th className="px-4 pb-2 text-right"><button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={handleResetFilters} className="rounded p-1 text-slate-500 hover:bg-slate-200"><RotateCcw className="h-3.5 w-3.5" /></button></th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {paginatedActivities.length === 0 ? (
@@ -571,7 +571,7 @@ export default function ActivityLogPage() {
                       <Activity className="h-6 w-6" />
                     </div>
                     <p className="text-sm font-semibold text-slate-700">
-                      Tidak ada aktivitas yang sesuai kriteria
+                      {loading ? "Memuat Activity Log..." : loadError ? "Activity Log belum dapat dimuat" : "Tidak ada aktivitas yang sesuai kriteria"}
                     </p>
                     <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
                       Tidak ditemukan riwayat telematika yang cocok dengan
@@ -599,21 +599,13 @@ export default function ActivityLogPage() {
                         {item.date}
                       </div>
                       <div className="text-[11px] text-slate-400 tabular-nums mt-0.5">
-                        {item.time ? `${item.time} WIB` : "—"}
+                        {item.time ? `${item.time} ${item.timeZoneLabel}` : "—"}
                       </div>
                     </td>
 
                     {/* 2. Device */}
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <Link
-                        href={`/reports/timeline/${encodeURIComponent(
-                          item.deviceId
-                        )}`}
-                        className="font-semibold text-slate-800 hover:text-violet-700 hover:underline"
-                        title={`Buka Timeline Perangkat ${item.deviceId}`}
-                      >
-                        {item.deviceId}
-                      </Link>
+                      {item.deviceCodes.map((code) => <div key={code} className="font-semibold text-slate-800">{code}</div>)}
                     </td>
 
                     {/* 3. Unit Number (Clean text only, resolved via relationship) */}
@@ -633,6 +625,7 @@ export default function ActivityLogPage() {
                       <p className="text-slate-800 font-medium leading-relaxed truncate">
                         {item.summary}
                       </p>
+                      <p className="mt-1 text-[11px] text-slate-500">{item.formNumber}</p>
                     </td>
 
                     {/* 6. Performed By */}
@@ -653,13 +646,11 @@ export default function ActivityLogPage() {
                     {/* Actions: View Timeline */}
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <Link
-                        href={`/reports/timeline/${encodeURIComponent(
-                          item.deviceId
-                        )}`}
+                        href={`/reports/activity-log/${item.activityId}`}
                         className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 text-slate-600 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 transition"
-                        title={`Buka riwayat timeline ${item.deviceId}`}
+                        title={`Buka rincian ${item.formNumber}`}
                       >
-                        <span>Timeline</span>
+                        <span>Detail</span>
                         <ExternalLink className="h-3 w-3" />
                       </Link>
                     </td>

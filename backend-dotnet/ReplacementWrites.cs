@@ -14,8 +14,13 @@ public static class ReplacementWrites
 
     public static void Map(WebApplication app, Func<string> getConnectionString)
     {
-        app.MapPost("/api/replacements", async (HttpContext context, CancellationToken cancellationToken) =>
-        {
+        app.MapPost("/api/replacements", (HttpContext context, CancellationToken cancellationToken) => CreateAsync(app, getConnectionString, context, cancellationToken));
+        app.MapPatch("/api/replacements/{formNumber}", (HttpContext context, string formNumber, CancellationToken cancellationToken) => UpdateAsync(app, getConnectionString, context, formNumber, cancellationToken));
+        app.MapDelete("/api/replacements/{formNumber}", (HttpContext context, string formNumber, CancellationToken cancellationToken) => DeleteAsync(app, getConnectionString, context, formNumber, cancellationToken));
+    }
+
+    internal static async Task<IResult> CreateAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -178,10 +183,10 @@ public static class ReplacementWrites
                     foreach (var path in createdFiles)
                         try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
-        });
+    }
 
-        app.MapPatch("/api/replacements/{formNumber}", async (HttpContext context, string formNumber, CancellationToken cancellationToken) =>
-        {
+    internal static async Task<IResult> UpdateAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, string formNumber, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -302,10 +307,10 @@ public static class ReplacementWrites
                     foreach (var path in createdFiles)
                         try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
-        });
+    }
 
-        app.MapDelete("/api/replacements/{formNumber}", async (HttpContext context, string formNumber, CancellationToken cancellationToken) =>
-        {
+    internal static async Task<IResult> DeleteAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, string formNumber, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -384,7 +389,6 @@ public static class ReplacementWrites
             catch (NpgsqlException) { return commitStarted ? Error(503, "COMMIT_OUTCOME_UNKNOWN", "Reload before retrying.") : Error(503, "DATABASE_UNAVAILABLE", "Database unavailable."); }
             catch (IOException) { return Error(503, "PHOTO_STORAGE_UNAVAILABLE", "Photo storage unavailable."); }
             catch (UnauthorizedAccessException) { return Error(503, "PHOTO_STORAGE_UNAVAILABLE", "Photo storage unavailable."); }
-        });
     }
 
     private static bool Validate(ReplacementPayload input, out DateTime started, out DateTime finished, out string message)

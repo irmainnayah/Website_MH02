@@ -34,9 +34,9 @@ Thumbs.db
 .idea/
 
 # Local photo storage (never commit uploaded photos)
-.storage/
+# .storage/
 
 # .NET build output and local configuration
-backend-dotnet/bin/
-backend-dotnet/obj/
-backend-dotnet/appsettings.Local.json
+# backend-dotnet/bin/
+# backend-dotnet/obj/
+# backend-dotnet/appsettings.Local.json

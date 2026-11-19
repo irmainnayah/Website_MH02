@@ -1,15 +1,9 @@
 // src/components/dashboard/charts/DeviceStatusChart.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { useAuth } from "@/features/auth/AuthContext";
-
-interface StatusCount {
-  key: string;
-  label: string;
-  count: number;
-}
+import { useDashboardData } from "../DashboardDataProvider";
 
 const STATUS_COLORS: Record<string, string> = {
   in_use: "#2563eb",
@@ -19,32 +13,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function DeviceStatusChart() {
-  const { isAuthenticated } = useAuth();
-  const [statuses, setStatuses] = useState<StatusCount[]>([]);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setState("loading");
-    setStatuses([]);
-    fetch("/api/dotnet/dashboard/status-distribution", { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(response.status === 401 ? "Sesi login diperlukan." : "Data status perangkat tidak tersedia.");
-        return response.json() as Promise<StatusCount[]>;
-      })
-      .then((result) => {
-        setStatuses(result);
-        setState("ready");
-      })
-      .catch((reason: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : "Data status perangkat tidak tersedia.");
-        setState("error");
-      });
-    return () => controller.abort();
-  }, [attempt, isAuthenticated]);
+  const { summary } = useDashboardData();
+  const statuses = summary?.statusDistribution ?? [];
 
   const total = statuses.reduce((sum, status) => sum + status.count, 0);
   const data = statuses.map((status) => ({
@@ -54,22 +24,13 @@ export default function DeviceStatusChart() {
     percentage: total ? Math.round((status.count / total) * 100) : 0,
   }));
 
-  if (state !== "ready") {
-    return (
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm min-h-[340px] flex flex-col items-center justify-center gap-3" aria-live="polite">
-        <span className="text-xs text-slate-500">{state === "loading" ? "Memuat grafik status perangkat..." : error}</span>
-        {state === "error" && <button type="button" className="text-xs font-semibold text-blue-700" onClick={() => setAttempt((value) => value + 1)}>Coba lagi</button>}
-      </div>
-    );
-  }
-
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
       <div>
         <div className="flex items-center justify-between pb-2 border-b border-slate-100">
           <div>
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              Status Pemasangan Perangkat
+              Status Perangkat
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">Distribusi status perangkat terdaftar</p>
           </div>
@@ -95,8 +56,8 @@ export default function DeviceStatusChart() {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: any, name: any, item: any) => [
-                  `${value} unit (${item.payload.percentage}%)`,
+                formatter={(value, name) => [
+                  `${value} unit (${total ? Math.round(Number(value) / total * 100) : 0}%)`,
                   name,
                 ]}
                 contentStyle={{

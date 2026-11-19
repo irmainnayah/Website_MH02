@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useMemo, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   Clock,
   ArrowLeft,
@@ -19,14 +20,15 @@ import {
   User,
   Shield,
   FileText,
+  Download,
+  RotateCcw,
+  Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
-import {
-  devices as allDevices,
-  getAllEnrichedActivities,
-} from "@/lib/mock-data";
-import { DeviceRecord, ActivityRecord, DeviceStatus } from "@/types/dashboard";
-import { getTroubleshootRecords, subscribeToTroubleshootRecords } from "@/lib/mock-data/troubleshoots";
-import { getReplacementRecords, subscribeToReplacementRecords } from "@/lib/mock-data/replacement";
+import { DeviceStatus } from "@/types/dashboard";
+import { deleteTimelineActivity, getDeviceTimeline, TimelineDevice, TimelineEntry } from "@/lib/timeline-api";
+import { useAuth } from "@/features/auth/AuthContext";
 
 // Status Badge Helper
 function renderDeviceStatusBadge(status: DeviceStatus) {
@@ -109,7 +111,7 @@ function getActivityVisuals(type: string) {
       };
     default:
       return {
-        label: type,
+        label: ({ registered: "Registrasi Perangkat", details_updated: "Data Perangkat Diperbarui", soft_deleted: "Perangkat Diarsipkan", transaction_deleted: "Transaksi Dihapus", device_override: "Koreksi Perangkat" } as Record<string, string>)[type] ?? type,
         icon: Activity,
         badgeClass: "bg-slate-50 text-slate-700 border-slate-200",
         indicatorBg: "bg-slate-600 text-white shadow-slate-200",
@@ -122,39 +124,69 @@ function getActivityVisuals(type: string) {
 
 export default function DeviceTimelinePage() {
   const params = useParams();
+  const router = useRouter();
+  const { currentUser } = useAuth();
   const rawId = typeof params?.id === "string" ? decodeURIComponent(params.id) : "";
-  const troubleshootRecords = useSyncExternalStore(
-    subscribeToTroubleshootRecords,
-    getTroubleshootRecords,
-    getTroubleshootRecords
-  );
-  const replacementRecords = useSyncExternalStore(
-    subscribeToReplacementRecords,
-    getReplacementRecords,
-    getReplacementRecords
-  );
-
-  // Find Device Record
-  const device: DeviceRecord | null = useMemo(() => {
-    if (!rawId) return null;
-    return allDevices.find((d) => d.deviceId.toLowerCase() === rawId.toLowerCase()) || null;
+  const [device, setDevice] = useState<TimelineDevice | null>(null);
+  const [deviceActivities, setDeviceActivities] = useState<TimelineEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+  const [deleteTarget, setDeleteTarget] = useState<TimelineEntry | null>(null);
+  const [countdown, setCountdown] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setLoadError(null); setDevice(null); setDeviceActivities([]);
+    getDeviceTimeline(rawId).then((result) => { if (active) { setDevice(result.device); setDeviceActivities(result.items); } })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat timeline perangkat."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [rawId]);
-
-  // Gather activities for this device
-  const deviceActivities: ActivityRecord[] = useMemo(() => {
-    if (!rawId) return [];
-    // Ensure external stores trigger recompute
-    void troubleshootRecords;
-    void replacementRecords;
-    const all = getAllEnrichedActivities();
-    return all
-      .filter((a) => a.deviceId.toLowerCase() === rawId.toLowerCase())
-      .sort((a, b) => {
-        const dateTimeA = `${a.date} ${a.time || "00:00"}`;
-        const dateTimeB = `${b.date} ${b.time || "00:00"}`;
-        return dateTimeB.localeCompare(dateTimeA);
-      });
-  }, [rawId, troubleshootRecords, replacementRecords]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, dateFrom, dateTo, pageSize, rawId]);
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const timer = window.setInterval(() => setCountdown((previous) => Math.max(0, previous - 1)), 1000);
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !deleting) setDeleteTarget(null); };
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", close);
+    return () => { window.clearInterval(timer); window.removeEventListener("keydown", close); document.body.style.overflow = previous; };
+  }, [deleteTarget, deleting]);
+  const dateError = dateFrom && dateTo && dateFrom > dateTo ? "Tanggal mulai tidak boleh melewati tanggal selesai." : null;
+  const filtered = deviceActivities.filter((entry) => {
+    const query = search.trim().toLowerCase();
+    return (!query || `${entry.formNumber ?? ""} ${entry.summary} ${entry.details} ${entry.unitNo ?? ""} ${entry.technicianName}`.toLowerCase().includes(query)) &&
+      (typeFilter === "all" || typeFilter === entry.type) && (!dateFrom || entry.date >= dateFrom) && (!dateTo || entry.date <= dateTo);
+  });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  async function confirmDelete() {
+    if (!deleteTarget?.activityId || deleteTarget.entryType !== "activity" || deleting || countdown > 0 || currentUser.role !== "superadmin") return;
+    setDeleting(true); setActionError(null);
+    try {
+      await deleteTimelineActivity(rawId, deleteTarget.activityId);
+      setDeleteTarget(null);
+      const updated = await getDeviceTimeline(rawId);
+      setDevice(updated.device); setDeviceActivities(updated.items);
+    } catch (error) { setActionError(error instanceof Error ? error.message : "Gagal menghapus aktivitas."); setDeleteTarget(null); }
+    finally { setDeleting(false); }
+  }
+  function exportCsv() {
+    if (dateError || filtered.length === 0) { setActionError(dateError ?? "Tidak ada riwayat untuk diekspor."); return; }
+    const cell = (value: string) => `"${(/^[=+@\-\t\r]/.test(value) ? `'${value}` : value).replace(/"/g, '""')}"`;
+    const rows = [["Key", "Form Number", "Kategori", "Jenis", "Tanggal", "Waktu", "Zona", "Unit Historis", "Ringkasan", "Pelaksana"],
+      ...filtered.map((entry) => [entry.key, entry.formNumber ?? "", entry.entryType, getActivityVisuals(entry.type).label, entry.date, entry.time, entry.timeZoneLabel, entry.unitNo ?? "", entry.summary, entry.technicianName])];
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + rows.map((row) => row.map(cell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a"); link.href = url; link.download = `timeline_${rawId}_${dateFrom || "awal"}_${dateTo || "akhir"}.csv`; link.click(); URL.revokeObjectURL(url);
+  }
 
   // Compute statistics
   const stats = useMemo(() => {
@@ -167,12 +199,14 @@ export default function DeviceTimelinePage() {
       removals,
       troubleshoots,
       replacements,
-      total: deviceActivities.length,
+      total: deviceActivities.filter((entry) => entry.entryType === "activity").length,
+      events: deviceActivities.filter((entry) => entry.entryType === "event").length,
     };
   }, [deviceActivities]);
 
+  if (loading) return <div role="status" className="mx-auto max-w-5xl py-12 text-center text-sm text-slate-500">Memuat timeline perangkat...</div>;
   // Device not found view
-  if (!device && deviceActivities.length === 0) {
+  if (!device) {
     return (
       <div className="space-y-6 max-w-5xl mx-auto pb-16">
         <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -187,9 +221,9 @@ export default function DeviceTimelinePage() {
           <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto mb-4 text-amber-600">
             <AlertCircle className="h-8 w-8" />
           </div>
-          <h1 className="text-lg font-bold text-slate-800">Perangkat Tidak Ditemukan</h1>
+          <h1 className="text-lg font-bold text-slate-800">Timeline Belum Dapat Dimuat</h1>
           <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-            Perangkat dengan ID <strong className="text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{rawId || "KOSONG"}</strong> tidak terdaftar dalam sistem master perangkat operasional.
+            {loadError ?? `Perangkat ${rawId} tidak ditemukan.`}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
             <Link href="/operations/installation" className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
@@ -206,15 +240,17 @@ export default function DeviceTimelinePage() {
     );
   }
 
-  const deviceId = device?.deviceId || rawId;
-  const unitNo = device?.unitNo || deviceActivities[0]?.unitNo || "Belum Terpasang";
-  const district = device?.district || deviceActivities[0]?.district || "Sangatta";
-  const equipmentType = device?.equipmentType || deviceActivities[0]?.equipmentType || "Dump Truck";
-  const serialNumber = device?.serialNumber || `SN-${deviceId}`;
-  const status = device?.status || "in_use";
+  const deviceId = device.deviceId;
+  const unitNo = device.unitNo || "Tidak terpasang";
+  const district = device.district;
+  const equipmentType = device.equipmentType || "-";
+  const serialNumber = device.serialNumber;
+  const status = device.status;
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-16">
+      {actionError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{actionError}</p>}
+      {!device.isArchived && <div className="flex justify-end"><select aria-label="Tambah aktivitas" defaultValue="" onChange={(event) => { const paths: Record<string, string> = { installation: "/operations/installation/new", replacement: "/operations/replacement/new", removal: "/operations/removal/new", troubleshoot: "/support/troubleshoots/new" }; if (paths[event.target.value]) router.push(paths[event.target.value]); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"><option value="" disabled>Tambah Aktivitas</option><option value="installation">Installation</option><option value="replacement">Replacement</option><option value="removal">Removal</option><option value="troubleshoot">Troubleshoot</option></select></div>}
       {/* Breadcrumb Navigation */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -225,9 +261,9 @@ export default function DeviceTimelinePage() {
           <span>/</span>
           <span className="text-slate-800 font-semibold">Device Timeline ({deviceId})</span>
         </div>
-        <Link href="/operations/installation" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition shadow-sm">
+        <Link href="/reports/timeline" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition shadow-sm">
           <ArrowLeft className="h-3.5 w-3.5 text-slate-500" />
-          <span>Kembali ke Riwayat Instalasi</span>
+          <span>Directory Timeline</span>
         </Link>
       </div>
 
@@ -241,6 +277,7 @@ export default function DeviceTimelinePage() {
               </span>
               <span className="text-[11px] font-medium text-slate-500">Site: {district}</span>
               {renderDeviceStatusBadge(status)}
+              {device.isArchived && <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">Arsip</span>}
             </div>
             <h1 className="text-2xl font-bold text-slate-900 mt-2 flex items-center gap-3">
               <span className="text-violet-600">{deviceId}</span>
@@ -269,7 +306,7 @@ export default function DeviceTimelinePage() {
             <div className="px-3 py-1">
               <span className="text-[10px] text-slate-400 font-medium block">Total Aktivitas</span>
               <span className="font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded border border-violet-200 inline-block tabular-nums">
-                {stats.total} Record{stats.total !== 1 ? "s" : ""}
+                {stats.total} aktivitas / {stats.events} event
               </span>
             </div>
           </div>
@@ -348,20 +385,29 @@ export default function DeviceTimelinePage() {
             </p>
           </div>
           <span className="text-xs text-slate-500 font-medium bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
-            {deviceActivities.length} Aktivitas Tercatat
+            {deviceActivities.length} Entri Tercatat
           </span>
         </div>
 
-        {deviceActivities.length === 0 ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs font-medium text-slate-600">Cari<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nomor form, unit, ringkasan..." className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-xs" /></label>
+          <label className="text-xs font-medium text-slate-600">Jenis<select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><option value="all">Semua</option>{Array.from(new Set(deviceActivities.map((entry) => entry.type))).map((type) => <option key={type} value={type}>{getActivityVisuals(type).label}</option>)}</select></label>
+          <label className="text-xs font-medium text-slate-600">Dari<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-xs" /></label>
+          <label className="text-xs font-medium text-slate-600">Sampai<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-xs" /></label>
+          <button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={() => { setSearch(""); setTypeFilter("all"); setDateFrom(""); setDateTo(""); }} className="rounded-lg border border-slate-200 p-2 text-slate-600"><RotateCcw className="h-4 w-4" /></button>
+          <button type="button" disabled={Boolean(dateError) || filtered.length === 0} onClick={exportCsv} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-40"><Download className="h-4 w-4" />CSV</button>
+        </div>
+        {dateError && <p role="alert" className="text-xs text-rose-700">{dateError}</p>}
+        {filtered.length === 0 ? (
           <div className="py-12 text-center">
             <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
               <Activity className="h-6 w-6" />
             </div>
             <p className="text-sm font-semibold text-slate-700">
-              Belum Ada Riwayat Aktivitas Operasional
+              Tidak ada riwayat yang sesuai
             </p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-              Perangkat ini belum memiliki catatan aktivitas pemasangan, perbaikan, penggantian, atau pelepasan.
+              {deviceActivities.length === 0 ? "Perangkat ini belum memiliki catatan aktivitas atau lifecycle event tersimpan." : "Tidak ada entri yang cocok dengan filter."}
             </p>
           </div>
         ) : (
@@ -373,12 +419,12 @@ export default function DeviceTimelinePage() {
             />
 
             <div className="space-y-6">
-              {deviceActivities.map((act, index) => {
+              {paginated.map((act) => {
                 const visuals = getActivityVisuals(act.type);
                 const Icon = visuals.icon;
 
                 return (
-                  <div key={act.activityId + "-" + index} className="relative group">
+                  <div key={act.key} className="relative group">
                     {/* Circular timeline indicator positioned along the line */}
                     <div
                       className={`absolute -left-6 sm:-left-8 top-1.5 w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border-2 border-white shadow-sm z-10 transition-transform group-hover:scale-110 ${visuals.indicatorBg} ${visuals.ringClass}`}
@@ -400,13 +446,9 @@ export default function DeviceTimelinePage() {
                             {visuals.label}
                           </span>
                           <span className="text-xs text-slate-400">
-                            {act.activityId}
+                            {act.formNumber || act.key}
                           </span>
-                          {act.status && (
-                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600 capitalize">
-                              {act.status}
-                            </span>
-                          )}
+                          {act.role && <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600">{act.role}</span>}
                         </div>
 
                         {/* Timestamp & Duration */}
@@ -415,7 +457,7 @@ export default function DeviceTimelinePage() {
                             <Calendar className="h-3.5 w-3.5 text-slate-400" />
                             <span className="tabular-nums text-slate-700 font-semibold">{act.date}</span>
                             {act.time && (
-                              <span className="text-slate-400 tabular-nums">({act.time} WIB)</span>
+                              <span className="text-slate-400 tabular-nums">({act.time} {act.timeZoneLabel})</span>
                             )}
                           </div>
                           {act.durationFormatted && (
@@ -429,6 +471,8 @@ export default function DeviceTimelinePage() {
 
                       {/* Main Summary & Description */}
                       <div className="pt-3 space-y-2">
+                        {(act.beforeStatus || act.afterStatus) && <p className="text-xs text-slate-600">Sebelum: {act.beforeStatus || "-"} / {act.beforeUnit || "Tanpa unit"} ; Sesudah: {act.afterStatus || "-"} / {act.afterUnit || "Tanpa unit"}</p>}
+                        {act.sourceStartedAtLocal && <p className="text-xs text-slate-500">Waktu mulai transaksi asal: {act.sourceStartedAtLocal.replace("T", " ")} ({act.sourceTimeZone})</p>}
                         {act.summary && (
                           <p className="text-xs sm:text-sm font-medium text-slate-800 leading-relaxed">
                             {act.summary}
@@ -449,7 +493,7 @@ export default function DeviceTimelinePage() {
                             <Truck className="h-3.5 w-3.5 text-slate-400" />
                             <span className="text-slate-500">Unit:</span>
                             <span className="font-bold text-slate-800">
-                              {act.unitNo || unitNo || "—"}
+                              {act.unitNo || "Tanpa unit tercatat"}
                             </span>
                             {act.equipmentType && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
@@ -461,7 +505,7 @@ export default function DeviceTimelinePage() {
                           {/* Technician */}
                           <div className="flex items-center gap-1.5">
                             <User className="h-3.5 w-3.5 text-slate-400" />
-                            <span className="text-slate-500">Teknisi:</span>
+                            <span className="text-slate-500">{act.entryType === "event" ? "Pelaksana:" : "Teknisi:"}</span>
                             <span className="font-medium text-slate-800">
                               {act.technicianName}
                             </span>
@@ -478,42 +522,46 @@ export default function DeviceTimelinePage() {
                         </div>
 
                         {/* Navigation link to related form if applicable */}
-                        {act.type === "installation" && (
+                        {act.type === "installation" && act.detailPath && (
                           <Link
-                            href="/operations/installation"
+                            href={act.detailPath}
                             className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 hover:underline"
                           >
                             <span>Buka Form Instalasi</span>
                             <ArrowLeft className="h-3 w-3 rotate-180" />
                           </Link>
                         )}
-                        {act.type === "replacement" && (
+                        {act.type === "replacement" && act.detailPath && (
                           <Link
-                            href="/operations/replacement"
+                            href={act.detailPath}
                             className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 hover:text-violet-700 hover:underline"
                           >
                             <span>Buka Form Penggantian</span>
                             <ArrowLeft className="h-3 w-3 rotate-180" />
                           </Link>
                         )}
-                        {act.type === "removal" && (
+                        {act.type === "removal" && act.detailPath && (
                           <Link
-                            href="/operations/removal"
+                            href={act.detailPath}
                             className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:underline"
                           >
                             <span>Buka Form Pelepasan</span>
                             <ArrowLeft className="h-3 w-3 rotate-180" />
                           </Link>
                         )}
-                        {act.type === "troubleshoot" && (
+                        {act.type === "troubleshoot" && act.detailPath && (
                           <Link
-                            href="/support/troubleshoots"
+                            href={act.detailPath}
                             className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-700 hover:underline"
                           >
                             <span>Buka Form Troubleshoot</span>
                             <ArrowLeft className="h-3 w-3 rotate-180" />
                           </Link>
                         )}
+                        {currentUser.role === "superadmin" && !device.isArchived && act.entryType === "activity" && <div className="flex gap-3">
+                          {act.editPath && <Link href={act.editPath} className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700"><Pencil className="h-3 w-3" />Edit</Link>}
+                          <button type="button" disabled={deleting} onClick={() => { setCountdown(5); setDeleteTarget(act); }} className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700"><Trash2 className="h-3 w-3" />Hapus</button>
+                        </div>}
                       </div>
                     </div>
                   </div>
@@ -522,7 +570,9 @@ export default function DeviceTimelinePage() {
             </div>
           </div>
         )}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-xs text-slate-600"><label className="flex items-center gap-2">Jumlah per halaman<select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1"><option>10</option><option>25</option><option>50</option><option>100</option></select><span>{filtered.length} entri</span></label><div className="flex items-center gap-2"><button type="button" title="Halaman sebelumnya" aria-label="Halaman sebelumnya" disabled={currentPage === 1} onClick={() => setPage((previous) => Math.max(1, previous - 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span>{currentPage} / {totalPages}</span><button type="button" title="Halaman berikutnya" aria-label="Halaman berikutnya" disabled={currentPage === totalPages} onClick={() => setPage((previous) => Math.min(totalPages, previous + 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div></div>
       </div>
+      {deleteTarget && createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4"><div role="dialog" aria-modal="true" aria-labelledby="timeline-delete-title" className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-xl"><h2 id="timeline-delete-title" className="text-base font-bold text-slate-900">Hapus {deleteTarget.formNumber}?</h2><p className="text-sm text-slate-600">Transaksi asal ikut dihapus setelah pemeriksaan riwayat dan kondisi perangkat. Event penghapusan tetap disimpan.</p><div className="flex justify-end gap-2"><button type="button" disabled={deleting} onClick={() => setDeleteTarget(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold">Batal</button><button type="button" disabled={deleting || countdown > 0} onClick={() => void confirmDelete()} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Trash2 className="h-4 w-4" />{deleting ? "Menghapus..." : countdown > 0 ? `Hapus (${countdown})` : "Hapus Transaksi"}</button></div></div></div>, document.body)}
     </div>
   );
 }

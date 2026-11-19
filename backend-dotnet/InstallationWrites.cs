@@ -17,8 +17,11 @@ public static class InstallationWrites
 {
     public static void Map(WebApplication app, Func<string> getConnectionString)
     {
-        app.MapPost("/api/installations", async (HttpContext context, CancellationToken cancellationToken) =>
-        {
+        app.MapPost("/api/installations", (HttpContext context, CancellationToken cancellationToken) => HandleAsync(app, getConnectionString, context, cancellationToken));
+    }
+
+    internal static async Task<IResult> HandleAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -263,7 +266,6 @@ public static class InstallationWrites
                     foreach (var path in createdFiles)
                         try { File.Delete(path); } catch (IOException) { app.Logger.LogWarning("Unable to remove an uncommitted photo file."); } catch (UnauthorizedAccessException) { app.Logger.LogWarning("Unable to remove an uncommitted photo file."); }
             }
-        });
     }
 
     private static string? Validate(CreateInstallationRequest input, out DateTime started, out DateTime finished)

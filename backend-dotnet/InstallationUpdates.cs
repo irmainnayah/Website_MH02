@@ -19,8 +19,11 @@ public static class InstallationUpdates
 
     public static void Map(WebApplication app, Func<string> getConnectionString)
     {
-        app.MapPatch("/api/installations/{id:guid}", async (HttpContext context, Guid id, CancellationToken cancellationToken) =>
-        {
+        app.MapPatch("/api/installations/{id:guid}", (HttpContext context, Guid id, CancellationToken cancellationToken) => HandleAsync(app, getConnectionString, context, id, cancellationToken));
+    }
+
+    internal static async Task<IResult> HandleAsync(WebApplication app, Func<string> getConnectionString, HttpContext context, Guid id, CancellationToken cancellationToken)
+    {
             if (!AuthEndpoints.HasAllowedOrigin(context)) return Error(403, "BAD_ORIGIN", "Cross-origin request refused.");
             var token = context.Request.Cookies["mh02_session"];
             if (string.IsNullOrEmpty(token) || token.Length > 128) return Error(401, "UNAUTHENTICATED", "Authentication required.");
@@ -122,7 +125,6 @@ public static class InstallationUpdates
                     ? Error(503, "COMMIT_OUTCOME_UNKNOWN", "The outcome could not be confirmed. Reload before retrying.")
                     : Error(503, "DATABASE_UNAVAILABLE", "Database unavailable.");
             }
-        });
     }
 
     private static IResult Error(int status, string code, string message) =>

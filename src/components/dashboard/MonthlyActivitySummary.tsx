@@ -1,8 +1,9 @@
 // src/components/dashboard/MonthlyActivitySummary.tsx
 "use client";
 
-import React, { useMemo } from "react";
-import { getCurrentMonthActivitiesSummary, getCurrentMonthLabel } from "@/lib/mock-data";
+import React from "react";
+import { useDashboardData } from "./DashboardDataProvider";
+import { dashboardMonthLabel } from "@/lib/dashboard-api";
 import {
   Wrench,
   AlertTriangle,
@@ -12,8 +13,10 @@ import {
 } from "lucide-react";
 
 export default function MonthlyActivitySummary() {
-  const summary = useMemo(() => getCurrentMonthActivitiesSummary(), []);
-  const monthLabel = useMemo(() => getCurrentMonthLabel(), []);
+  const { summary: data } = useDashboardData();
+  if (!data) return null;
+  const summary = data.currentMonthActivities;
+  const monthLabel = dashboardMonthLabel(data.currentMonth);
 
   const cards = [
     {
@@ -59,11 +62,11 @@ export default function MonthlyActivitySummary() {
               Ringkasan Operasional Bulan Berjalan
             </h3>
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-              Mock Data
+              {data.siteId === null ? "Semua Site" : "Site"}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Akumulasi aktivitas teknisi lapangan yang telah selesai (Completed)
+            Transaksi operasional tersimpan pada bulan mulai pengerjaan
           </p>
         </div>
 

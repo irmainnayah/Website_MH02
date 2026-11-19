@@ -12,11 +12,12 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import { getEquipmentTypeData } from "@/lib/mock-data";
+import { useDashboardData } from "../DashboardDataProvider";
 
 export default function EquipmentTypeChart() {
   const [isMounted, setIsMounted] = useState(false);
-  const data = getEquipmentTypeData();
+  const { summary } = useDashboardData();
+  const data = summary?.equipmentDistribution ?? [];
   const total = data.reduce((acc, curr) => acc + curr.count, 0);
 
   const colors = ["#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#8b5cf6"];
@@ -40,7 +41,7 @@ export default function EquipmentTypeChart() {
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
             Perangkat Berdasarkan Tipe Alat
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-              Mock Data
+              In Use
             </span>
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">Alokasi pada {total} unit terpasang aktif di armada</p>
@@ -51,7 +52,7 @@ export default function EquipmentTypeChart() {
       </div>
 
       <div className="h-72 w-full mt-4">
-        <ResponsiveContainer width="100%" height="100%">
+        {total === 0 ? <div className="flex h-full items-center justify-center text-xs text-slate-500">Belum ada perangkat terpasang.</div> : <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             layout="vertical"
@@ -66,7 +67,7 @@ export default function EquipmentTypeChart() {
               axisLine={{ stroke: "#e2e8f0" }}
             />
             <Tooltip
-              formatter={(value: any) => [`${value} unit perangkat`, "Jumlah Unit"]}
+              formatter={(value) => [`${value} unit perangkat`, "Jumlah Unit"]}
               contentStyle={{
                 backgroundColor: "#ffffff",
                 borderColor: "#e2e8f0",
@@ -81,7 +82,7 @@ export default function EquipmentTypeChart() {
               ))}
             </Bar>
           </BarChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </div>
     </div>
   );

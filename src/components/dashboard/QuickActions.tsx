@@ -17,7 +17,7 @@ export default function QuickActions() {
     {
       label: "Catat Pemasangan",
       sublabel: "Registrasi & instalasi unit baru",
-      href: "/operations/installation",
+      href: "/operations/installation/new",
       icon: Wrench,
       accent: "hover:border-blue-300 hover:bg-blue-50/40 text-blue-700",
       iconBg: "bg-blue-100 text-blue-700",
@@ -25,7 +25,7 @@ export default function QuickActions() {
     {
       label: "Laporkan Troubleshoot",
       sublabel: "Input kendala & penanganan",
-      href: "/support/troubleshoots",
+      href: "/support/troubleshoots/new",
       icon: AlertTriangle,
       accent: "hover:border-amber-300 hover:bg-amber-50/40 text-amber-700",
       iconBg: "bg-amber-100 text-amber-700",
@@ -33,7 +33,7 @@ export default function QuickActions() {
     {
       label: "Penggantian Unit",
       sublabel: "Swapping perangkat bermasalah",
-      href: "/operations/replacement",
+      href: "/operations/replacement/new",
       icon: RefreshCw,
       accent: "hover:border-violet-300 hover:bg-violet-50/40 text-violet-700",
       iconBg: "bg-violet-100 text-violet-700",
@@ -41,7 +41,7 @@ export default function QuickActions() {
     {
       label: "Pelepasan Perangkat",
       sublabel: "Dismantle unit dari armada",
-      href: "/operations/removal",
+      href: "/operations/removal/new",
       icon: Trash2,
       accent: "hover:border-rose-300 hover:bg-rose-50/40 text-rose-700",
       iconBg: "bg-rose-100 text-rose-700",

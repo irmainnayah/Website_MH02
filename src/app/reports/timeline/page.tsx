@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import {
   Clock,
@@ -14,16 +14,12 @@ import {
   ChevronRight,
   Filter,
   X,
+  RotateCcw,
+  ChevronLeft,
 } from "lucide-react";
-import { devices as allDevices } from "@/lib/mock-data";
-import { DeviceRecord, DeviceStatus, DistrictName } from "@/types/dashboard";
-
-const DISTRICTS: DistrictName[] = [
-  "Sangatta",
-  "Bengalon",
-  "Wahau",
-  "Sangatta Utara",
-];
+import { DeviceStatus } from "@/types/dashboard";
+import { getTimelineDirectory, TimelineDevice } from "@/lib/timeline-api";
+import { useAuth } from "@/features/auth/AuthContext";
 
 function renderStatusBadge(status: DeviceStatus) {
   switch (status) {
@@ -66,9 +62,26 @@ function renderStatusBadge(status: DeviceStatus) {
 }
 
 export default function TimelineDirectoryPage() {
+  const { currentUser } = useAuth();
+  const [allDevices, setAllDevices] = useState<TimelineDevice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [archived, setArchived] = useState(false);
+  const [pageSize, setPageSize] = useState(24);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [districtFilter, setDistrictFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const DISTRICTS = Array.from(new Set(allDevices.map((device) => device.district))).sort();
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setLoadError(null); setAllDevices([]);
+    getTimelineDirectory(archived).then((devices) => { if (active) setAllDevices(devices); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat perangkat."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [archived]);
+  useEffect(() => { setPage(1); }, [search, districtFilter, statusFilter, archived, pageSize]);
 
   const filteredDevices = useMemo(() => {
     return allDevices.filter((d) => {
@@ -87,10 +100,14 @@ export default function TimelineDirectoryPage() {
       }
       return true;
     });
-  }, [search, districtFilter, statusFilter]);
+  }, [allDevices, search, districtFilter, statusFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredDevices.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedDevices = filteredDevices.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {(loading || loadError) && <div role={loadError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${loadError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{loadError ?? "Memuat directory perangkat..."}</div>}
       {/* Page Header */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -164,13 +181,15 @@ export default function TimelineDirectoryPage() {
               <option value="in_stock_damaged">In Stock - Repair</option>
               <option value="in_stock_ho">HO Repair</option>
             </select>
+            {currentUser.role === "superadmin" && <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />Arsip</label>}
+            <button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={() => { setSearch(""); setDistrictFilter("all"); setStatusFilter("all"); setArchived(false); }} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"><RotateCcw className="h-4 w-4" /></button>
           </div>
         </div>
       </div>
 
       {/* Device Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {filteredDevices.map((d) => (
+        {paginatedDevices.map((d) => (
           <Link
             key={d.deviceId}
             href={`/reports/timeline/${encodeURIComponent(d.deviceId)}`}
@@ -188,7 +207,7 @@ export default function TimelineDirectoryPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">Unit Lambung:</span>
                   <span className="font-bold text-slate-800">
-                    {d.unitNo || "Belum Pasang"}
+                    {d.unitNo || "Tidak terpasang"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -219,6 +238,11 @@ export default function TimelineDirectoryPage() {
             </div>
           </Link>
         ))}
+      </div>
+      {!loading && !loadError && filteredDevices.length === 0 && <p role="status" className="py-8 text-center text-sm text-slate-500">Tidak ada perangkat yang sesuai filter.</p>}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+        <label className="flex items-center gap-2">Jumlah per halaman<select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1"><option>12</option><option>24</option><option>48</option><option>100</option></select><span>{filteredDevices.length} perangkat</span></label>
+        <div className="flex items-center gap-2"><button type="button" title="Halaman sebelumnya" aria-label="Halaman sebelumnya" disabled={currentPage === 1} onClick={() => setPage((previous) => Math.max(1, previous - 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span>{currentPage} / {totalPages}</span><button type="button" title="Halaman berikutnya" aria-label="Halaman berikutnya" disabled={currentPage === totalPages} onClick={() => setPage((previous) => Math.min(totalPages, previous + 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div>
       </div>
     </div>
   );

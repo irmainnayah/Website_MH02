@@ -3,29 +3,26 @@
 
 import React from "react";
 import KpiCard from "@/components/ui/KpiCard";
-import { getKpiSummary } from "@/lib/mock-data";
-import { Calendar } from "lucide-react";
+import { useDashboardData } from "./DashboardDataProvider";
+import { Boxes, MonitorCheck, Package, Wrench } from "lucide-react";
 
-/**
- * Grid of KPI cards displayed on the Dashboard.
- * Each card shows a numeric value and a small label "*Mock Data*" to indicate
- * that the numbers come from the local mock data set.
- */
 export default function KpiGrid() {
+  const { summary } = useDashboardData();
+  if (!summary) return null;
   const {
-    totalDevices,
+    registeredDevices,
     totalInstalled,
     hoRepair,
     inStock,
-  } = getKpiSummary();
+  } = summary.kpis;
 
   // Define the list of KPI cards – order follows confirmed business requirements.
   const kpis = [
-    { title: "Total Perangkat", value: totalDevices, description: "*Mock Data*" },
-    { title: "Total Installed", value: totalInstalled, description: "*Mock Data*" },
-    { title: "HO Repair", value: hoRepair, description: "*Mock Data*" },
-    { title: "Device In Stock", value: inStock, description: "*Mock Data*" },
-  ];
+    { title: "Perangkat Tercatat", value: registeredDevices, description: "Inventaris nonarsip", tone: "blue", icon: Boxes },
+    { title: "Total Installed", value: totalInstalled, description: "In Use", tone: "green", icon: MonitorCheck },
+    { title: "Butuh Repair ke HO", value: hoRepair, description: "Kondisi In Stock HO", tone: "rose", icon: Wrench },
+    { title: "Device In Stock", value: inStock, description: "RFU, Rusak, dan Butuh Repair ke HO", tone: "amber", icon: Package },
+  ] as const;
 
   return (
     <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -35,6 +32,8 @@ export default function KpiGrid() {
           title={kpi.title}
           value={kpi.value}
           description={kpi.description}
+          tone={kpi.tone}
+          icon={kpi.icon}
         />
       ))}
     </section>

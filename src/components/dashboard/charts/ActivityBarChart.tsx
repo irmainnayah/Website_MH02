@@ -1,7 +1,7 @@
 // src/components/dashboard/charts/ActivityBarChart.tsx
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -12,23 +12,19 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { getMonthlyActivityChartData, getRollingSixMonths } from "@/lib/mock-data";
+import { useDashboardData } from "../DashboardDataProvider";
 
 export default function ActivityBarChart() {
   const [isMounted, setIsMounted] = useState(false);
-  const data = useMemo(() => getMonthlyActivityChartData(), []);
-  const rollingMonths = useMemo(() => getRollingSixMonths(), []);
+  const { summary } = useDashboardData();
+  const data = summary?.monthlyActivities ?? [];
+  const total = data.reduce((sum, month) => sum + month.installation + month.replacement + month.removal + month.troubleshoot, 0);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  const periodLabel = useMemo(() => {
-    if (!rollingMonths || rollingMonths.length === 0) return "";
-    const first = rollingMonths[0].yearMonth;
-    const last = rollingMonths[rollingMonths.length - 1].yearMonth;
-    return `${first} – ${last}`;
-  }, [rollingMonths]);
+  const periodLabel = data.length ? `${data[0].yearMonth} - ${data[data.length - 1].yearMonth}` : "";
 
   if (!isMounted) {
     return (
@@ -45,15 +41,15 @@ export default function ActivityBarChart() {
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
             Aktivitas Operasional Lapangan ({periodLabel})
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-              Mock Data
+              6 Bulan
             </span>
           </h3>
-          <p className="text-xs text-slate-500 mt-0.5">Jumlah aktivitas selesai (completed) berdasarkan 4 modul operasional</p>
+          <p className="text-xs text-slate-500 mt-0.5">Jumlah transaksi berdasarkan bulan lokal waktu mulai pengerjaan</p>
         </div>
       </div>
 
       <div className="h-72 w-full mt-4">
-        <ResponsiveContainer width="100%" height="100%">
+        {total === 0 ? <div className="flex h-full items-center justify-center text-xs text-slate-500">Belum ada transaksi pada periode ini.</div> : <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
             <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={{ stroke: "#e2e8f0" }} />
@@ -85,7 +81,7 @@ export default function ActivityBarChart() {
             <Bar dataKey="replacement" name="replacement" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
             <Bar dataKey="removal" name="removal" fill="#f43f5e" radius={[3, 3, 0, 0]} />
           </BarChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </div>
     </div>
   );

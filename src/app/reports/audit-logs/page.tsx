@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -16,57 +17,66 @@ import {
   RotateCcw,
   Search,
   X,
+  Eye,
 } from "lucide-react";
 import {
   AuditLogEntry,
   AuditLogOperation,
   AuditLogTable,
-  getAuditLogEntries,
-  subscribeToAuditLogEntries,
-} from "@/lib/mock-data/audit-logs";
+  auditDate,
+  auditTimestamp,
+  getAuditEntry,
+  getAuditLogs,
+} from "@/lib/audit-log-api";
 
 const TABLE_LABELS: Record<AuditLogTable, string> = {
-  installation: "Installation (mock)",
-  replacement: "Replacement (mock)",
-  removal: "Removal (mock)",
-  troubleshoot: "Troubleshoots (mock)",
-  user_management: "User Management (mock)",
+  installation: "Installation",
+  replacement: "Replacement",
+  removal: "Removal",
+  troubleshoot: "Troubleshoot",
+  device: "Device",
+  user_management: "User Management",
 };
 
-function getLocalDate(timestamp: string): string {
-  const date = new Date(timestamp);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getRecordHref(entry: AuditLogEntry): string | null {
-  if (entry.operation === "DELETE") return null;
-  const id = encodeURIComponent(entry.recordId);
-  switch (entry.table) {
-    case "installation":
-      return `/operations/installation/${id}`;
-    case "replacement":
-      return `/operations/replacement/${id}`;
-    case "removal":
-      return `/operations/removal/${id}`;
-    case "troubleshoot":
-      return `/support/troubleshoots/${id}`;
-    case "user_management":
-      return null;
-  }
-}
+const FILTER_COLUMNS = [
+  { key: "timestamp", label: "Timestamp" }, { key: "table", label: "Table" }, { key: "operation", label: "Operation" },
+  { key: "recordId", label: "Record ID" }, { key: "changedBy", label: "Changed By" }, { key: "ipAddress", label: "IP Address" },
+  { key: "action", label: "Action" }, { key: "siteName", label: "Site" },
+] as const;
+type FilterColumn = typeof FILTER_COLUMNS[number]["key"];
 
 export default function AuditLogsPage() {
-  const entries = useSyncExternalStore(
-    subscribeToAuditLogEntries,
-    getAuditLogEntries,
-    getAuditLogEntries
-  );
+  const [entries, setEntries] = useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setLoadError(null); setEntries([]);
+    getAuditLogs().then((items) => { if (active) setEntries(items); })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat Audit Log."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [refresh]);
+  useEffect(() => {
+    if (!selectedId) return;
+    let active = true;
+    setSelectedEntry(null); setDetailError(null);
+    getAuditEntry(selectedId).then((entry) => { if (active) setSelectedEntry(entry); })
+      .catch((error: unknown) => { if (active) setDetailError(error instanceof Error ? error.message : "Gagal memuat detail audit."); });
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedId(null); };
+    window.addEventListener("keydown", close);
+    return () => { active = false; document.body.style.overflow = previous; window.removeEventListener("keydown", close); };
+  }, [selectedId]);
   const [searchQuery, setSearchQuery] = useState("");
   const [tableFilter, setTableFilter] = useState<AuditLogTable | "all">("all");
   const [operationFilter, setOperationFilter] = useState<AuditLogOperation | "all">("all");
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<FilterColumn, string>>>({});
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [pageSize, setPageSize] = useState(10);
@@ -85,6 +95,9 @@ export default function AuditLogsPage() {
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase();
     return entries.filter((entry) => {
+      for (const column of FILTER_COLUMNS) {
+        if (columnFilters[column.key] && String(entry[column.key] ?? "") !== columnFilters[column.key]) return false;
+      }
       if (query) {
         const searchableValues = [
           entry.recordId,
@@ -93,17 +106,22 @@ export default function AuditLogsPage() {
           entry.operation,
           entry.changedBy ?? "Tidak tersedia",
           entry.ipAddress ?? "Tidak tersedia",
+          entry.action,
+          entry.siteName ?? "",
+          entry.requestId ?? "",
+          entry.changeGroupId,
+          entry.reason ?? "",
         ];
         if (!searchableValues.some((value) => value.toLocaleLowerCase().includes(query))) return false;
       }
       if (tableFilter !== "all" && entry.table !== tableFilter) return false;
       if (operationFilter !== "all" && entry.operation !== operationFilter) return false;
-      const entryDate = getLocalDate(entry.timestamp);
+      const entryDate = auditDate(entry.timestamp);
       if (startDate && entryDate < startDate) return false;
       if (endDate && entryDate > endDate) return false;
       return true;
     });
-  }, [entries, searchQuery, tableFilter, operationFilter, startDate, endDate]);
+  }, [entries, searchQuery, tableFilter, operationFilter, startDate, endDate, columnFilters]);
 
   const totalItems = filteredEntries.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -113,13 +131,14 @@ export default function AuditLogsPage() {
     return filteredEntries.slice(start, start + pageSize);
   }, [filteredEntries, safeCurrentPage, pageSize]);
   const isFiltered = Boolean(
-    searchQuery.trim() || tableFilter !== "all" || operationFilter !== "all" || startDate || endDate
+    searchQuery.trim() || tableFilter !== "all" || operationFilter !== "all" || startDate || endDate || Object.values(columnFilters).some(Boolean)
   );
 
   const resetFilters = () => {
     setSearchQuery("");
     setTableFilter("all");
     setOperationFilter("all");
+    setColumnFilters({});
     setStartDate("");
     setEndDate("");
     setCurrentPage(1);
@@ -127,16 +146,25 @@ export default function AuditLogsPage() {
 
   const exportCsv = () => {
     if (dateError || filteredEntries.length === 0) return;
-    const headers = ["Timestamp", "Table", "Operation", "Record ID", "Changed By", "IP Address"];
-    const escapeCsv = (value: string | number | undefined | null) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const headers = ["Audit ID", "Timestamp UTC", "Table", "Operation", "Record ID", "Changed By", "IP Address", "Action", "Site", "Change Group", "Request ID", "Reason"];
+    const escapeCsv = (value: string | number | undefined | null) => {
+      const text = String(value ?? "");
+      const safe = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const rows = filteredEntries.map((entry) => [
-      entry.timestamp,
+      entry.auditId,
+      auditTimestamp(entry.timestamp),
       TABLE_LABELS[entry.table],
       entry.operation,
       entry.recordId,
       entry.changedBy ?? "Tidak tersedia",
       entry.ipAddress ?? "Tidak tersedia",
+      entry.action,
+      entry.siteName ?? "Global / tidak tercatat",
+      entry.changeGroupId,
+      entry.requestId,
+      entry.reason,
     ]);
     const csv = "\uFEFF" + [
       headers.map(escapeCsv).join(","),
@@ -154,21 +182,20 @@ export default function AuditLogsPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-12">
+      {(loading || loadError) && <div role={loadError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${loadError ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{loadError ?? "Memuat Audit Log..."}</div>}
       <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:flex-row md:items-center">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Audit Logs</h1>
           <p className="mt-1 text-xs text-slate-500">
-            Riwayat aksi pada mock data aplikasi selama sesi ini.
+            Riwayat perubahan data tersimpan.
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">
-          <Clock className="h-3.5 w-3.5" /> Prototype action log
+          <Clock className="h-3.5 w-3.5" /> UTC
         </span>
       </div>
 
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">
-        INSERT dan UPDATE di sini adalah label aksi pada mock UI, bukan bukti operasi database. Changed By dan IP Address tidak tersedia dari sumber saat ini. Data log hanya tersimpan di memori sesi dan hilang setelah refresh.
-      </div>
+      <div className="flex justify-end"><button type="button" title="Muat ulang" aria-label="Muat ulang Audit Log" disabled={loading} onClick={() => setRefresh((previous) => previous + 1)} className="rounded-lg border border-slate-200 p-2 text-slate-600 disabled:opacity-40"><RotateCcw className="h-4 w-4" /></button></div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="space-y-3 border-b border-slate-200 bg-slate-50/50 p-4">
@@ -217,28 +244,38 @@ export default function AuditLogsPage() {
                 <th className="whitespace-nowrap px-4 py-3">Record ID</th>
                 <th className="whitespace-nowrap px-4 py-3">Changed By</th>
                 <th className="whitespace-nowrap px-4 py-3">IP Address</th>
+                <th className="whitespace-nowrap px-4 py-3">Action</th>
+                <th className="whitespace-nowrap px-4 py-3">Site</th>
+                <th className="whitespace-nowrap px-4 py-3">Detail</th>
+              </tr>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                {FILTER_COLUMNS.map((column) => <th key={column.key} className="px-4 pb-2 font-normal"><select aria-label={`Filter ${column.label}`} value={columnFilters[column.key] ?? ""} onChange={(event) => { setColumnFilters((previous) => ({ ...previous, [column.key]: event.target.value })); setCurrentPage(1); }} className="w-full max-w-40 rounded border border-slate-200 bg-white px-1 py-1 text-[11px] font-normal text-slate-600"><option value="">Semua</option>{Array.from(new Set(entries.map((entry) => String(entry[column.key] ?? "")))).filter(Boolean).sort().map((value) => <option key={value} value={value}>{column.key === "table" ? TABLE_LABELS[value as AuditLogTable] : column.key === "timestamp" ? auditTimestamp(value) : value}</option>)}</select></th>)}
+                <th className="px-4 pb-2"><button type="button" title="Clear Filter" aria-label="Clear Filter" onClick={resetFilters} className="rounded p-1 text-slate-500"><RotateCcw className="h-3.5 w-3.5" /></button></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {paginatedEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center">
+                  <td colSpan={9} className="px-4 py-12 text-center">
                     <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400"><FileText className="h-6 w-6" /></div>
-                    <p className="text-sm font-semibold text-slate-700">{entries.length ? "Tidak ada aksi yang sesuai" : "Belum ada aksi tercatat"}</p>
-                    <p className="mt-1 text-xs text-slate-400">{entries.length ? "Ubah pencarian atau filter." : "Aksi mock yang didukung akan muncul di sini setelah berhasil dilakukan."}</p>
+                    <p className="text-sm font-semibold text-slate-700">{loading ? "Memuat Audit Log..." : loadError ? "Audit Log belum dapat dimuat" : entries.length ? "Tidak ada aksi yang sesuai" : "Belum ada audit tercatat"}</p>
+                    <p className="mt-1 text-xs text-slate-400">{!loading && !loadError && entries.length ? "Tidak ada entri yang cocok dengan filter." : ""}</p>
                     {isFiltered && <button type="button" onClick={resetFilters} className="mt-3 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">Reset Filter</button>}
                   </td>
                 </tr>
               ) : paginatedEntries.map((entry) => {
-                const recordHref = getRecordHref(entry);
+                const recordHref = entry.recordPath;
                 return (
                   <tr key={entry.entryId} className="transition-colors hover:bg-slate-50/75">
-                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-700">{new Date(entry.timestamp).toLocaleString("id-ID")}</td>
+                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-700">{auditTimestamp(entry.timestamp)}</td>
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700">{TABLE_LABELS[entry.table]}</td>
                     <td className="whitespace-nowrap px-4 py-3"><span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-semibold text-slate-700">{entry.operation}</span></td>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums font-semibold text-blue-700">{recordHref ? <Link href={recordHref} className="inline-flex items-center gap-1 hover:underline">{entry.recordId}<ArrowUpRight className="h-3 w-3" /></Link> : entry.recordId}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500">{entry.changedBy ?? "Tidak tersedia"}</td>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-500">{entry.ipAddress ?? "Tidak tersedia"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{entry.action}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{entry.siteName ?? "Global / tidak tercatat"}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><button type="button" title={`Detail audit ${entry.auditId}`} aria-label={`Detail audit ${entry.auditId}`} onClick={() => setSelectedId(entry.auditId)} className="rounded border border-slate-200 p-1.5 text-blue-700"><Eye className="h-4 w-4" /></button></td>
                   </tr>
                 );
               })}
@@ -263,6 +300,14 @@ export default function AuditLogsPage() {
           </div>
         </div>
       </div>
+      {selectedId && createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => setSelectedId(null)}><div role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" onClick={(event) => event.stopPropagation()} className="max-h-[90vh] w-full max-w-5xl space-y-5 overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
+        <div className="flex items-center justify-between gap-3"><h2 id="audit-detail-title" className="text-base font-bold text-slate-900">Detail Audit #{selectedId}</h2><button type="button" aria-label="Tutup detail audit" title="Tutup" onClick={() => setSelectedId(null)} className="rounded p-1 text-slate-500"><X className="h-5 w-5" /></button></div>
+        {detailError ? <p role="alert" className="text-sm text-rose-700">{detailError}</p> : !selectedEntry ? <p role="status" className="text-sm text-slate-500">Memuat detail audit...</p> : <>
+          <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">{[["Waktu", auditTimestamp(selectedEntry.timestamp)], ["Table", TABLE_LABELS[selectedEntry.table]], ["Operation", selectedEntry.operation], ["Record", selectedEntry.recordId], ["Entity ID", selectedEntry.entityId], ["Changed By", selectedEntry.changedBy ?? "Tidak tersedia"], ["Site", selectedEntry.siteName ?? "Global / tidak tercatat"], ["Action", selectedEntry.action], ["IP", selectedEntry.ipAddress ?? "Tidak tersedia"], ["Request ID", selectedEntry.requestId ?? "Tidak tersedia"], ["Change Group", selectedEntry.changeGroupId], ["Reason", selectedEntry.reason ?? "-"]].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words text-slate-800">{value}</dd></div>)}</dl>
+          <div className="grid gap-4 md:grid-cols-2"><section className="min-w-0 space-y-2"><h3 className="text-sm font-semibold text-slate-700">Nilai Sebelum</h3><pre className="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">{JSON.stringify(selectedEntry.oldValues, null, 2)}</pre></section><section className="min-w-0 space-y-2"><h3 className="text-sm font-semibold text-slate-700">Nilai Sesudah</h3><pre className="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">{JSON.stringify(selectedEntry.newValues, null, 2)}</pre></section></div>
+          {selectedEntry.recordPath && <Link href={selectedEntry.recordPath} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700">Buka data asal<ArrowUpRight className="h-3.5 w-3.5" /></Link>}
+        </>}
+      </div></div>, document.body)}
     </div>
   );
 }

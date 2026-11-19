@@ -5,6 +5,7 @@ import React from "react";
 import { Search, X, Download, Filter, Calendar, RotateCcw, AlertCircle } from "lucide-react";
 
 interface FilterBarProps {
+  districtOptions: string[];
   searchQuery: string;
   onSearchChange: (query: string) => void;
   statusFilter: string;
@@ -24,6 +25,7 @@ interface FilterBarProps {
 }
 
 export default function FilterBar({
+  districtOptions,
   searchQuery,
   onSearchChange,
   statusFilter,
@@ -92,11 +94,7 @@ export default function FilterBar({
             className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
           >
             <option value="all">Semua Distrik</option>
-            <option value="Sangatta">Sangatta</option>
-            <option value="Bengalon">Bengalon</option>
-            <option value="Wahau">Wahau</option>
-            <option value="Sangatta Utara">Sangatta Utara</option>
-            <option value="Head Office">Head Office</option>
+            {districtOptions.map((district) => <option key={district} value={district}>{district}</option>)}
           </select>
         </div>
       </div>

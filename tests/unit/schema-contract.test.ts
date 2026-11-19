@@ -8,6 +8,81 @@ import { constraintNameFromMessage } from "../../src/server/errors.ts";
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
 
+test("Dashboard aggregates scoped nonarchived devices and stored local activity months without mock or speculative asset totals", () => {
+  const code = read("backend-dotnet/DashboardData.cs");
+  assert.match(code, /SessionStore\.TryScope/);
+  assert.match(code, /IsolationLevel\.RepeatableRead/);
+  assert.match(code, /NOT d\.is_deleted AND \(@site IS NULL OR d\.site_id = @site\)/);
+  assert.match(code, /d\.current_location_site_id/);
+  assert.match(code, /COALESCE\(ls\.name, 'Belum tercatat'\)/);
+  assert.match(code, /make_interval\(mins => a\.start_utc_offset_minutes\)/);
+  assert.match(code, /generate_series/);
+  assert.match(code, /a\.activity_type, count\(\*\) AS total FROM activities a/);
+  assert.match(code, /officialAssetTotal = \(long\?\)null/);
+  assert.match(code, /lastActivityDate = Date\(reader, 14\)/);
+  assert.doesNotMatch(code, /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?(?:devices|activities)\b/i);
+  for (const component of ["KpiGrid.tsx", "MonthlyActivitySummary.tsx", "DashboardHeader.tsx", "charts/DeviceStatusChart.tsx", "charts/DeviceLocationChart.tsx", "charts/ActivityBarChart.tsx", "charts/EquipmentTypeChart.tsx", "DeviceList/index.tsx", "DeviceList/DeviceDetailModal.tsx"]) {
+    assert.doesNotMatch(read(`src/components/dashboard/${component}`), /mock-data/, `${component} must use API data`);
+  }
+  assert.match(read("src/app/page.tsx"), /DashboardDataProvider/);
+});
+
+test("PostgreSQL audit endpoints preserve append-only history, Site scope and secret redaction", () => {
+  const service = read("backend-dotnet/AuditLogEndpoints.cs");
+  assert.doesNotMatch(service, /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?audit_log\b/i);
+  assert.match(service, /AUDIT_APPEND_ONLY/);
+  assert.match(service, /Error\(405,/);
+  assert.match(service, /@site IS NULL OR l\.site_id = @site/);
+  assert.match(service, /@site IS NULL OR site_id = @site/);
+  assert.match(service, /SessionStore\.TryScope/);
+  assert.match(service, /reader\.GetInt64\(0\)\.ToString/);
+  assert.match(service, /Redact\(JsonNode\.Parse/);
+  assert.match(service, /obj\.Remove\(key\)/);
+  assert.match(service, /foreach \(var child in array\) Redact\(child\)/);
+  assert.match(service, /a\.activity_id = l\.entity_id/);
+  assert.match(service, /occurred_at >= \(@from::date::timestamp AT TIME ZONE 'UTC'\)/);
+  const schema = read("database/postgresql/001_initial_schema.sql");
+  assert.match(schema, /audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log/);
+  const page = read("src/app/reports/audit-logs/page.tsx");
+  assert.doesNotMatch(page, /mock-data|useSyncExternalStore/);
+});
+
+test("Timeline uses only live activity links and append-only device events with device-bound writes", () => {
+  const reads = read("backend-dotnet/TimelineEndpoints.cs");
+  assert.match(reads, /FROM activity_devices ad JOIN activities a/);
+  assert.match(reads, /FROM device_events e/);
+  assert.match(reads, /UNION ALL/);
+  assert.match(reads, /'A:' \|\| a\.activity_id::text \|\| ':' \|\| ad\.device_id::text/);
+  assert.match(reads, /'E:' \|\| e\.event_id::text/);
+  assert.match(reads, /ORDER BY sort_time DESC, created_time DESC, entry_key DESC/);
+  assert.doesNotMatch(reads, /FROM audit_log|JOIN audit_log/i);
+  assert.match(reads, /@admin OR NOT d\.is_deleted/);
+  assert.match(reads, /ad\.device_id = @device AND a\.site_id = @owner_site/);
+  const writes = read("backend-dotnet/TimelineWrites.cs");
+  assert.match(writes, /ActivityLogWrites\.DispatchAsync/);
+  assert.match(writes, /HISTORY_IMMUTABLE/);
+  assert.match(writes, /DEVICE_MISMATCH/);
+  assert.match(writes, /ad\.device_id = @device AND a\.activity_id = @id/);
+  assert.doesNotMatch(writes, /\b(?:UPDATE|DELETE\s+FROM|INSERT\s+INTO)\s+(?:public\.)?(?:device_events|activities|devices)\b/i);
+  for (const page of ["src/app/reports/timeline/page.tsx", "src/app/reports/timeline/[id]/page.tsx"]) assert.doesNotMatch(read(page), /mock-data|useSyncExternalStore/);
+});
+
+test("Activity Log writes delegate to the original transaction handlers without duplicating persistence", () => {
+  const code = read("backend-dotnet/ActivityLogWrites.cs");
+  for (const handler of ["InstallationWrites.HandleAsync", "InstallationUpdates.HandleAsync", "InstallationDeletes.HandleAsync",
+    "ReplacementWrites.CreateAsync", "ReplacementWrites.UpdateAsync", "ReplacementWrites.DeleteAsync", "RemovalWrites.WriteAsync", "TroubleshootWrites.WriteAsync"]) {
+    assert.ok(code.includes(handler), `Activity Log must use ${handler}`);
+  }
+  assert.doesNotMatch(code, /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?(?:activities|activity_devices|devices|audit_log)\b/i);
+  assert.match(code, /SessionStore\.TryScope/);
+  const reads = read("backend-dotnet/ActivityLogEndpoints.cs");
+  for (const table of ["installation_details", "replacement_details", "removal_details", "troubleshoot_details", "activity_devices", "transaction_photos"]) assert.ok(reads.includes(table));
+  assert.doesNotMatch(reads, /WHERE[^;]*?d\.is_deleted\s*=\s*(?:false|FALSE)/);
+  assert.match(reads, /start_utc_offset_minutes/);
+  const page = read("src/app/reports/activity-log/page.tsx");
+  assert.doesNotMatch(page, /mock-data|deviceUnitMap|useSyncExternalStore/);
+});
+
 function allowedValues(migration: string, constraint: string): string[] {
   const re = new RegExp(`CONSTRAINT\\s+${constraint}\\s+CHECK\\s*\\(([\\s\\S]*?)\\)\\s*[,)]`, "i");
   const m = re.exec(migration);
