@@ -110,3 +110,13 @@ own Site (another Site = 403). **No total-assets formula is invented** (pending 
 6. Service-level tests against the dev DB (no password): `npm run test:service`, `npm run test:phase5`.
 7. HTTP test of the Phase 5 endpoints (app running; it creates sessions directly, no password): `npm run test:http`
    (`BASE_URL=http://localhost:3000` by default). Do not run `next build` while `next dev` is running: both write `.next`.
+
+## Konfigurasi lokal backend .NET (wajib per komputer)
+
+`backend-dotnet/appsettings.Local.json`, `bin/`, `obj/` dan `.storage/` **tidak ada di Git** (lihat `.gitignore`). Setiap developer:
+
+1. Salin `backend-dotnet/appsettings.Local.example.json` menjadi `backend-dotnet/appsettings.Local.json`.
+2. Isi `Username` dan `Password` akun PostgreSQL lokal miliknya sendiri (jangan akun bersama, jangan di-commit).
+3. Jalankan backend dari folder `backend-dotnet` (`dotnet run`); `bin/` dan `obj/` dibuat otomatis saat build.
+
+Jika password pernah ter-commit di riwayat Git, ganti password akun database tersebut.

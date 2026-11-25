@@ -11,7 +11,7 @@ const routes: Record<string, readonly string[]> = {
   "auth/mfa/verify": ["POST"],
   reference: ["GET"],
   "fleet-units": ["GET"],
-  devices: ["GET"],
+  devices: ["GET", "POST"],
   installations: ["GET", "POST"],
   replacements: ["GET", "POST"],
   removals: ["GET", "POST"],
@@ -33,6 +33,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const { path } = await context.params;
   const endpoint = path.join("/");
   const isDeviceDetail = path.length === 2 && path[0] === "devices" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
+  const isDeviceArchive = path.length === 3 && path[0] === "devices" && path[2] === "archive" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
   const isUserDetail = path.length === 2 && path[0] === "users" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
   const isInstallationDetail = path.length === 2 && path[0] === "installations" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
   const isReplacementDetail = path.length === 2 && path[0] === "replacements" && /^REP-\d{6}-\d{3,}$/i.test(path[1]);
@@ -44,7 +45,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const isTimelineDetail = isTimelineDevice && path.length === 2;
   const isTimelineEntry = isTimelineDevice && path.length === 4 && ["activities", "events"].includes(path[2]) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[3]);
   const isPhoto = path.length === 2 && path[0] === "photos" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path[1]);
-  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && request.method === "GET") || (isPhoto && request.method === "GET") || (isAuditDetail && ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(request.method)) || (isTimelineDetail && ["GET", "POST"].includes(request.method)) || (isTimelineEntry && ["PATCH", "DELETE"].includes(request.method)) || ((isInstallationDetail || isReplacementDetail || isRemovalDetail || isTroubleshootDetail || isActivityDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
+  if (!(routes[endpoint]?.includes(request.method) || (isDeviceDetail && ["GET", "PATCH"].includes(request.method)) || (isDeviceArchive && request.method === "POST") || (isPhoto && request.method === "GET") || (isAuditDetail && ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(request.method)) || (isTimelineDetail && ["GET", "POST"].includes(request.method)) || (isTimelineEntry && ["PATCH", "DELETE"].includes(request.method)) || ((isInstallationDetail || isReplacementDetail || isRemovalDetail || isTroubleshootDetail || isActivityDetail) && ["GET", "PATCH", "DELETE"].includes(request.method)) || (isUserDetail && ["GET", "PUT", "DELETE"].includes(request.method)))) {
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
   }
 

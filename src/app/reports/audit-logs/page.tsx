@@ -29,6 +29,48 @@ import {
   getAuditLogs,
 } from "@/lib/audit-log-api";
 
+type AuditVal = Parameters<typeof JSON.stringify>[0];
+const asRecord = (value: AuditVal): Record<string, AuditVal> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, AuditVal>) : null);
+const normalizeKey = (key: string): string => key.replace(/[_\s-]/g, "").toLowerCase();
+const NOISE_KEYS = new Set(["id", "rowversion", "updatedat", "updatedby", "createdat", "createdby", "sha256"]);
+const compactItem = (item: AuditVal): string => {
+  const record = asRecord(item);
+  if (!record) return String(item);
+  const slot = record.Slot ?? record.slot;
+  const caption = record.Caption ?? record.caption;
+  return slot ? `${slot}${caption ? ` (${caption})` : ""}` : JSON.stringify(record);
+};
+const showValue = (value: AuditVal): string => {
+  if (value === null || value === undefined || value === "") return "—";
+  if (Array.isArray(value)) return value.length === 0 ? "(kosong)" : value.map(compactItem).join(", ");
+  return String(value);
+};
+// Flattens a snapshot to { field name -> value }. Nested objects are walked, so only the field name (the last part of the
+// path) is kept; arrays (photos) are summarised. The "before" and "after" snapshots of some transactions have different
+// shapes, so fields are matched by name, not by position.
+function flatten(value: AuditVal, out: Map<string, { label: string; value: AuditVal }> = new Map()): Map<string, { label: string; value: AuditVal }> {
+  const record = asRecord(value);
+  if (!record) return out;
+  for (const [key, child] of Object.entries(record)) {
+    if (asRecord(child)) flatten(child, out);
+    else if (!NOISE_KEYS.has(normalizeKey(key)) && !out.has(normalizeKey(key))) out.set(normalizeKey(key), { label: key, value: child });
+  }
+  return out;
+}
+function summarizeChanges(before: AuditVal, after: AuditVal): { field: string; before: string; after: string }[] {
+  const oldFields = flatten(before), newFields = flatten(after);
+  const oneSided = !asRecord(before) || !asRecord(after);
+  const rows: { field: string; before: string; after: string }[] = [];
+  for (const key of new Set([...oldFields.keys(), ...newFields.keys()])) {
+    const oldItem = oldFields.get(key), newItem = newFields.get(key);
+    if (!oneSided && (!oldItem || !newItem)) continue; // present on one side only: the snapshot shapes differ, so it is not a change
+    const oldText = showValue(oldItem?.value ?? null), newText = showValue(newItem?.value ?? null);
+    if (!oneSided && oldText === newText) continue;
+    rows.push({ field: (oldItem ?? newItem)!.label, before: oldText, after: newText });
+  }
+  return rows;
+}
+
 const TABLE_LABELS: Record<AuditLogTable, string> = {
   installation: "Installation",
   replacement: "Replacement",
@@ -304,7 +346,30 @@ export default function AuditLogsPage() {
         <div className="flex items-center justify-between gap-3"><h2 id="audit-detail-title" className="text-base font-bold text-slate-900">Detail Audit #{selectedId}</h2><button type="button" aria-label="Tutup detail audit" title="Tutup" onClick={() => setSelectedId(null)} className="rounded p-1 text-slate-500"><X className="h-5 w-5" /></button></div>
         {detailError ? <p role="alert" className="text-sm text-rose-700">{detailError}</p> : !selectedEntry ? <p role="status" className="text-sm text-slate-500">Memuat detail audit...</p> : <>
           <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">{[["Waktu", auditTimestamp(selectedEntry.timestamp)], ["Table", TABLE_LABELS[selectedEntry.table]], ["Operation", selectedEntry.operation], ["Record", selectedEntry.recordId], ["Entity ID", selectedEntry.entityId], ["Changed By", selectedEntry.changedBy ?? "Tidak tersedia"], ["Site", selectedEntry.siteName ?? "Global / tidak tercatat"], ["Action", selectedEntry.action], ["IP", selectedEntry.ipAddress ?? "Tidak tersedia"], ["Request ID", selectedEntry.requestId ?? "Tidak tersedia"], ["Change Group", selectedEntry.changeGroupId], ["Reason", selectedEntry.reason ?? "-"]].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words text-slate-800">{value}</dd></div>)}</dl>
-          <div className="grid gap-4 md:grid-cols-2"><section className="min-w-0 space-y-2"><h3 className="text-sm font-semibold text-slate-700">Nilai Sebelum</h3><pre className="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">{JSON.stringify(selectedEntry.oldValues, null, 2)}</pre></section><section className="min-w-0 space-y-2"><h3 className="text-sm font-semibold text-slate-700">Nilai Sesudah</h3><pre className="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">{JSON.stringify(selectedEntry.newValues, null, 2)}</pre></section></div>
+          {(() => {
+            const changes = summarizeChanges(selectedEntry.oldValues as AuditVal, selectedEntry.newValues as AuditVal);
+            const isUpdate = Boolean(asRecord(selectedEntry.oldValues as AuditVal) && asRecord(selectedEntry.newValues as AuditVal));
+            return (
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold text-slate-700">{isUpdate ? `Ringkasan Perubahan (${changes.length} field berubah)` : "Data Tercatat"}</h3>
+                {changes.length === 0 ? <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">{isUpdate ? "Tidak ada nilai yang berubah." : "Tidak ada data nilai pada entri ini."}</p> : (
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="px-3 py-2 font-medium">Field</th>{(isUpdate || selectedEntry.oldValues) && <th className="px-3 py-2 font-medium">Sebelum</th>}{(isUpdate || selectedEntry.newValues) && <th className="px-3 py-2 font-medium">Sesudah</th>}</tr></thead>
+                      <tbody className="divide-y divide-slate-100">{changes.map((row) => <tr key={row.field}><td className="px-3 py-2 font-medium text-slate-700">{row.field}</td>{(isUpdate || selectedEntry.oldValues) && <td className="break-all px-3 py-2 text-slate-600">{row.before}</td>}{(isUpdate || selectedEntry.newValues) && <td className="break-all px-3 py-2 text-slate-800">{row.after}</td>}</tr>)}</tbody>
+                    </table>
+                  </div>
+                )}
+                <details className="text-xs text-slate-500">
+                  <summary className="cursor-pointer font-medium">Lihat data lengkap (JSON)</summary>
+                  <div className="mt-2 grid gap-3 md:grid-cols-2">
+                    <pre className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-700">{JSON.stringify(selectedEntry.oldValues, null, 2)}</pre>
+                    <pre className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-700">{JSON.stringify(selectedEntry.newValues, null, 2)}</pre>
+                  </div>
+                </details>
+              </section>
+            );
+          })()}
           {selectedEntry.recordPath && <Link href={selectedEntry.recordPath} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700">Buka data asal<ArrowUpRight className="h-3.5 w-3.5" /></Link>}
         </>}
       </div></div>, document.body)}

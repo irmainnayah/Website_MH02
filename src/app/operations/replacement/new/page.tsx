@@ -27,6 +27,7 @@ import {
   X,
   HardDrive,
   Info,
+  Lock,
   Trash2,
 } from "lucide-react";
 import {
@@ -924,33 +925,30 @@ export default function NewReplacementPage() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
-      {/* 1. Header & Breadcrumb */}
+      {/* 1. Breadcrumb */}
       <div className="flex items-center justify-between">
-        <Link
-          href="/operations/replacement"
-          className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Kembali ke Daftar Replacement
-        </Link>
-        <span className="text-xs tabular-nums bg-violet-50 text-violet-700 px-3 py-1 rounded-full border border-violet-200">
-          {editingRecord ? `Form Number: ${displayedDocumentId}` : `Auto Form No: ${displayedDocumentId}`}
-        </span>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Link href="/operations/replacement" className="hover:text-blue-600 transition flex items-center gap-1 font-medium"><ArrowLeft className="h-3.5 w-3.5" /><span>Riwayat Replacement</span></Link>
+          <span>/</span>
+          <span className="text-slate-800 font-semibold">{editingRecord ? `Edit Formulir (${displayedDocumentId})` : "Formulir Penggantian Perangkat"}</span>
+        </div>
+        <Link href="/operations/replacement" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition shadow-sm"><X className="h-3.5 w-3.5" /><span>Batal (Cancel)</span></Link>
       </div>
 
       {/* 2. Title Card */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-xl bg-violet-50 text-violet-600 border border-violet-100">
-            <RefreshCw className="h-6 w-6" />
-          </div>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold text-slate-900">
-              {editingRecord ? "Edit Replacement" : "Form Replacement"}
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Catat pergantian unit telematika SMARTD DISPLAY lama dengan perangkat baru pada armada operasional.
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600 bg-violet-50 px-2.5 py-1 rounded-md border border-violet-200">Formulir Lapangan • Replacement</span>
+              {editingRecord && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">Mode Edit (Superadmin)</span>}
+            </div>
+            <h1 className="text-xl font-bold text-slate-800 mt-2 flex items-center gap-2.5"><RefreshCw className="h-6 w-6 text-violet-600" />{editingRecord ? "Edit Laporan Penggantian Perangkat (Replacement)" : "Formulir Penggantian Perangkat (Replacement)"}</h1>
+            <p className="text-xs text-slate-500 mt-1">Catat pergantian unit telematika SMARTD DISPLAY lama dengan perangkat baru pada armada operasional.</p>
+          </div>
+          <div className="text-right bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl shrink-0">
+            <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1 justify-end"><Lock className="h-3 w-3 text-slate-400" />No. Dokumen Otomatis:</p>
+            <p className="text-base font-bold tabular-nums text-violet-600 mt-0.5">{displayedDocumentId || "REP-..."}</p>
           </div>
         </div>
 
@@ -995,9 +993,9 @@ export default function NewReplacementPage() {
         {/* A. Bagian Perangkat Lama yang Diganti */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <HardDrive className="h-4 w-4 text-rose-500" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              A. Perangkat Lama yang Akan Diganti
+            <HardDrive className="h-4 w-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              1. Perangkat Lama yang Akan Diganti
             </h3>
           </div>
 
@@ -1076,9 +1074,9 @@ export default function NewReplacementPage() {
         {/* B. Informasi Dasar Aktivitas */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <Clock className="h-4 w-4 text-violet-600" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              B. Informasi Dasar Pelaksanaan
+            <Clock className="h-4 w-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              2. Informasi Dasar Pelaksanaan
             </h3>
           </div>
 
@@ -1211,16 +1209,16 @@ export default function NewReplacementPage() {
           )}
         </div>
 
-        {/* C. Informasi Device Baru (Pengganti) */}
+        {/* 3. Informasi Device Baru (Pengganti) */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
             <Zap className="h-4 w-4 text-emerald-600" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              C. Informasi Device Baru &amp; Unit Target
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              3. Informasi Device Baru &amp; Unit Target
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Dropdown Device ID Baru */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1355,12 +1353,12 @@ export default function NewReplacementPage() {
           </div>
         </div>
 
-        {/* E. Konfigurasi Jaringan */}
+        {/* 3b. Konfigurasi Jaringan */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
             <Network className="h-4 w-4 text-blue-600" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              E. Konfigurasi Jaringan Telematika
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              4. Konfigurasi Jaringan Telematika
             </h3>
           </div>
 
@@ -1421,13 +1419,98 @@ export default function NewReplacementPage() {
           </div>
         </div>
 
+        {/* G. Informasi Personel */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <User className="h-4 w-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              5. Informasi Personel Pelaksana
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Group Leader */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Group Leader (GL) <span className="text-rose-500">*</span>
+              </label>
+              <SearchableDropdown
+                id="replacement-group-leader"
+                value={formData.groupLeaderName}
+                options={groupLeaderOptions}
+                placeholder="Cari atau pilih Group Leader"
+                onChange={(value) => setFormData((prev) => ({ ...prev, groupLeaderName: value }))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Teknisi Pelaksana <span className="text-rose-500">*</span>
+              </label>
+              <SearchableDropdown
+                id="replacement-technician"
+                disabled
+                value={formData.technicianNrp}
+                options={technicianOptions}
+                placeholder="Cari atau pilih teknisi"
+                displayValue={formData.technicianName}
+                onChange={(nrp) => {
+                  if (nrp !== currentUser.nrp) return;
+                  setFormData((prev) => ({
+                    ...prev,
+                    technicianName: currentUser.name,
+                    technicianNrp: currentUser.nrp,
+                  }));
+                }}
+                error={Boolean(formErrors.technicianName)}
+              />
+              {formErrors.technicianName && (
+                <p className="text-[11px] text-rose-600 mt-1">{formErrors.technicianName}</p>
+              )}
+            </div>
+
+            {/* NRP */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                NRP Teknisi
+              </label>
+              <input
+                type="text"
+                value={formData.technicianNrp}
+                readOnly
+                className="w-full text-xs bg-slate-100 border border-slate-200 rounded-lg px-3 py-2.5 tabular-nums text-slate-700 cursor-not-allowed"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* H. Remarks / Catatan Tambahan */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <FileText className="h-4 w-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              6. Remarks &amp; Catatan Khusus
+            </h3>
+          </div>
+
+          <div>
+            <textarea
+              rows={3}
+              value={formData.remarks}
+              onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+              placeholder="Tuliskan kendala teknis atau catatan tambahan terkait proses penggantian unit..."
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+          </div>
+        </div>
+
         {/* F. Foto Dokumentasi: Empat Slot Foto Terpisah */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Camera className="h-4 w-4 text-violet-600" />
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-                F. Foto Dokumentasi Pengerjaan (4 Slot)
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                7. Dokumentasi Foto Pengerjaan (4 Slot)
               </h3>
             </div>
             <span className="text-[11px] text-slate-400">
@@ -1435,7 +1518,7 @@ export default function NewReplacementPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {REPLACEMENT_FORM_PHOTO_SLOTS.map((slotKey) => {
               const slotLabel = getReplacementFormPhotoLabel(slotKey);
               const photoUrl = formData.photos[slotKey];
@@ -1446,22 +1529,22 @@ export default function NewReplacementPage() {
               return (
                 <div
                   key={slotKey}
-                  className={`rounded-xl border overflow-hidden flex flex-col justify-between hover:shadow-md transition-shadow group p-3.5 space-y-3 ${
+                  className={`rounded-xl border overflow-hidden flex flex-col justify-between transition-shadow group p-4 space-y-2 ${
                     hasPhotoError
                       ? "border-rose-400 bg-rose-50/30"
-                      : "border-slate-200 bg-slate-50/70"
+                      : "border-slate-200 bg-white"
                   }`}
                 >
                   {/* 1. Photo Title (Top of card, above image) */}
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-slate-800 block line-clamp-1">
+                    <span className="text-xs font-bold text-slate-700 block line-clamp-1">
                       {slotLabel}
                     </span>
                   </div>
 
                   {/* 2. Photo Image or Placeholder (Below title) */}
                   {photoUrl ? (
-                    <div className="relative flex h-[180px] w-full items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-900 group">
+                    <div className="relative flex h-40 w-full items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 group">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={photoUrl}
@@ -1486,7 +1569,7 @@ export default function NewReplacementPage() {
                   ) : (
                     <div
                       onClick={() => fileInputRefs[slotKey].current?.click()}
-                      className="h-[180px] w-full border-2 border-dashed border-slate-300 hover:border-violet-400 rounded-lg flex flex-col items-center justify-center p-3 text-center cursor-pointer bg-white transition hover:bg-violet-50/30"
+                      className="h-40 w-full border-2 border-dashed border-slate-300 hover:border-violet-400 rounded-lg flex flex-col items-center justify-center p-3 text-center cursor-pointer bg-white transition hover:bg-violet-50/30"
                     >
                       <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mb-1 text-slate-400 group-hover:text-violet-500">
                         <Camera className="h-5 w-5" />
@@ -1550,104 +1633,10 @@ export default function NewReplacementPage() {
           </div>
         </div>
 
-        {/* G. Informasi Personel */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <User className="h-4 w-4 text-violet-600" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              G. Informasi Personel Pelaksana
-            </h3>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Group Leader */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Group Leader (GL) <span className="text-rose-500">*</span>
-              </label>
-              <SearchableDropdown
-                id="replacement-group-leader"
-                value={formData.groupLeaderName}
-                options={groupLeaderOptions}
-                placeholder="Cari atau pilih Group Leader"
-                onChange={(value) => setFormData((prev) => ({ ...prev, groupLeaderName: value }))}
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Teknisi Pelaksana <span className="text-rose-500">*</span>
-              </label>
-              <SearchableDropdown
-                id="replacement-technician"
-                disabled
-                value={formData.technicianNrp}
-                options={technicianOptions}
-                placeholder="Cari atau pilih teknisi"
-                displayValue={formData.technicianName}
-                onChange={(nrp) => {
-                  if (nrp !== currentUser.nrp) return;
-                  setFormData((prev) => ({
-                    ...prev,
-                    technicianName: currentUser.name,
-                    technicianNrp: currentUser.nrp,
-                  }));
-                }}
-                error={Boolean(formErrors.technicianName)}
-              />
-              {formErrors.technicianName && (
-                <p className="text-[11px] text-rose-600 mt-1">{formErrors.technicianName}</p>
-              )}
-            </div>
-
-            {/* NRP */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                NRP Teknisi
-              </label>
-              <input
-                type="text"
-                value={formData.technicianNrp}
-                readOnly
-                className="w-full text-xs bg-slate-100 border border-slate-200 rounded-lg px-3 py-2.5 tabular-nums text-slate-700 cursor-not-allowed"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* H. Remarks / Catatan Tambahan */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <FileText className="h-4 w-4 text-violet-600" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              H. Remarks &amp; Catatan Khusus
-            </h3>
-          </div>
-
-          <div>
-            <textarea
-              rows={3}
-              value={formData.remarks}
-              onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-              placeholder="Tuliskan kendala teknis atau catatan tambahan terkait proses penggantian unit..."
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            />
-          </div>
-        </div>
-
-        {/* I. Action Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
-          <Link
-            href="/operations/replacement"
-            className="px-5 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors shadow-2xs"
-          >
-            Batal
-          </Link>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold transition-colors shadow-sm disabled:opacity-60"
-          >
+        {/* Action Buttons */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+          <Link href="/operations/replacement" className="w-full sm:w-auto px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition text-center">Batal (Cancel)</Link>
+          <button type="submit" disabled={isSubmitting} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition disabled:opacity-60 disabled:cursor-not-allowed">
             <CheckCircle2 className="h-4 w-4" />
             {isSubmitting ? "Menyimpan Catatan..." : editingRecord ? "Simpan Perubahan Replacement" : "Submit Replacement Form"}
           </button>
@@ -1656,8 +1645,8 @@ export default function NewReplacementPage() {
       )}
 
       {/* Lightbox Zoom Modal */}
-      {zoomedPhoto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+      {zoomedPhoto && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
           <div className="relative max-w-4xl w-full bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl">
             <div className="p-4 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
               <div>
@@ -1682,7 +1671,7 @@ export default function NewReplacementPage() {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* Success Confirmation Modal */}
       {successModal && createPortal(

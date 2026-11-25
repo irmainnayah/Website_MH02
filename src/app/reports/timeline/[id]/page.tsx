@@ -25,10 +25,13 @@ import {
   Pencil,
   ChevronLeft,
   ChevronRight,
+  Archive,
 } from "lucide-react";
 import { DeviceStatus } from "@/types/dashboard";
 import { deleteTimelineActivity, getDeviceTimeline, TimelineDevice, TimelineEntry } from "@/lib/timeline-api";
 import { useAuth } from "@/features/auth/AuthContext";
+import DeviceFormModal from "@/components/devices/DeviceFormModal";
+import { archiveDevice } from "@/lib/device-api";
 
 // Status Badge Helper
 function renderDeviceStatusBadge(status: DeviceStatus) {
@@ -141,6 +144,11 @@ export default function DeviceTimelinePage() {
   const [countdown, setCountdown] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveReason, setArchiveReason] = useState("");
+  const [archiving, setArchiving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setLoading(true); setLoadError(null); setDevice(null); setDeviceActivities([]);
@@ -178,6 +186,17 @@ export default function DeviceTimelinePage() {
       setDevice(updated.device); setDeviceActivities(updated.items);
     } catch (error) { setActionError(error instanceof Error ? error.message : "Gagal menghapus aktivitas."); setDeleteTarget(null); }
     finally { setDeleting(false); }
+  }
+  async function confirmArchive() {
+    if (!device || archiving || currentUser.role !== "superadmin") return;
+    setArchiving(true); setActionError(null);
+    try {
+      await archiveDevice(device.internalId, { rowVersion: device.rowVersion, reason: archiveReason.trim() || undefined });
+      setArchiveOpen(false); setArchiveReason(""); setNotice(`Device ${device.deviceId} diarsipkan. Riwayatnya tetap tersimpan.`);
+      const updated = await getDeviceTimeline(rawId);
+      setDevice(updated.device); setDeviceActivities(updated.items);
+    } catch (error) { setActionError(error instanceof Error ? error.message : "Gagal mengarsipkan device."); setArchiveOpen(false); }
+    finally { setArchiving(false); }
   }
   function exportCsv() {
     if (dateError || filtered.length === 0) { setActionError(dateError ?? "Tidak ada riwayat untuk diekspor."); return; }
@@ -267,8 +286,19 @@ export default function DeviceTimelinePage() {
         </Link>
       </div>
 
+      {notice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
       {/* Main Device Identity Header Card */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        {currentUser.role === "superadmin" && !device.isArchived && (
+          <div className="mb-4 flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={() => { setNotice(null); setEditOpen(true); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+              <Pencil className="h-3.5 w-3.5 text-slate-500" /> Edit Device
+            </button>
+            <button type="button" disabled={device.status === "in_use"} title={device.status === "in_use" ? "Device yang sedang terpasang tidak dapat diarsipkan. Lakukan Removal terlebih dahulu." : "Arsipkan device (riwayat tetap tersimpan)"} onClick={() => { setNotice(null); setArchiveOpen(true); }} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">
+              <Archive className="h-3.5 w-3.5" /> Arsipkan Device
+            </button>
+          </div>
+        )}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-slate-100">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -573,6 +603,24 @@ export default function DeviceTimelinePage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-xs text-slate-600"><label className="flex items-center gap-2">Jumlah per halaman<select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1"><option>10</option><option>25</option><option>50</option><option>100</option></select><span>{filtered.length} entri</span></label><div className="flex items-center gap-2"><button type="button" title="Halaman sebelumnya" aria-label="Halaman sebelumnya" disabled={currentPage === 1} onClick={() => setPage((previous) => Math.max(1, previous - 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span>{currentPage} / {totalPages}</span><button type="button" title="Halaman berikutnya" aria-label="Halaman berikutnya" disabled={currentPage === totalPages} onClick={() => setPage((previous) => Math.min(totalPages, previous + 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div></div>
       </div>
       {deleteTarget && createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4"><div role="dialog" aria-modal="true" aria-labelledby="timeline-delete-title" className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-xl"><h2 id="timeline-delete-title" className="text-base font-bold text-slate-900">Hapus {deleteTarget.formNumber}?</h2><p className="text-sm text-slate-600">Transaksi asal ikut dihapus setelah pemeriksaan riwayat dan kondisi perangkat. Event penghapusan tetap disimpan.</p><div className="flex justify-end gap-2"><button type="button" disabled={deleting} onClick={() => setDeleteTarget(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold">Batal</button><button type="button" disabled={deleting || countdown > 0} onClick={() => void confirmDelete()} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Trash2 className="h-4 w-4" />{deleting ? "Menghapus..." : countdown > 0 ? `Hapus (${countdown})` : "Hapus Transaksi"}</button></div></div></div>, document.body)}
+      {editOpen && <DeviceFormModal device={device} onClose={() => setEditOpen(false)} onSaved={(result) => {
+        setEditOpen(false); setNotice("Data device diperbarui.");
+        if (result.deviceCode !== rawId) { router.replace(`/reports/timeline/${encodeURIComponent(result.deviceCode)}`); return; }
+        void getDeviceTimeline(rawId).then((updated) => { setDevice(updated.device); setDeviceActivities(updated.items); });
+      }} />}
+      {archiveOpen && createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => { if (!archiving) setArchiveOpen(false); }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="archive-title" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+          <h2 id="archive-title" className="text-base font-bold text-slate-800">Arsipkan Device {device.deviceId}?</h2>
+          <p className="mt-2 text-xs text-slate-600">Device tidak lagi muncul di daftar aktif dan tidak dapat dipakai pada form baru. Seluruh riwayat dan audit tetap tersimpan. Tidak ada penghapusan permanen, dan arsip tidak dapat dikembalikan dari aplikasi.</p>
+          <label className="mt-3 block text-xs font-medium text-slate-700">Alasan <span className="font-normal text-slate-400">(opsional)</span>
+            <textarea maxLength={500} rows={3} value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2" />
+          </label>
+          <div className="mt-4 flex justify-end gap-2 text-xs">
+            <button type="button" disabled={archiving} onClick={() => setArchiveOpen(false)} className="rounded-lg border border-slate-300 px-3 py-2 font-semibold text-slate-700">Batal</button>
+            <button type="button" disabled={archiving} onClick={() => void confirmArchive()} className="rounded-lg bg-rose-600 px-4 py-2 font-semibold text-white hover:bg-rose-700 disabled:opacity-50">{archiving ? "Memproses..." : "Arsipkan"}</button>
+          </div>
+        </div>
+      </div>, document.body)}
     </div>
   );
 }

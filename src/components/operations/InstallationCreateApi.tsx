@@ -3,7 +3,8 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Camera, RefreshCw, Save, Trash2, X, ZoomIn } from "lucide-react";
+import { createPortal } from "react-dom";
+import { AlertCircle, ArrowLeft, Calendar, Camera, Clock, Cpu, FileText, Lock, Network, RefreshCw, Save, Trash2, Upload, User, Wrench, X, ZoomIn } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
 
 type PhotoSlot = "mh02_installed" | "camera_dashboard_angle" | "nodered_config" | "gps_antenna";
@@ -16,6 +17,13 @@ interface Reference { sites: Site[]; lookups: Lookup[] }
 interface Device { deviceId: string; deviceCode: string; serialNumber: string; siteId: number }
 interface DevicePage { items: Device[]; total: number }
 interface Unit { unitId: string; unitNo: string; siteId: number; equipmentType: string; egi: string | null }
+interface EditRecord {
+  activityId: string; formNumber: string; siteId: number; siteName: string; unitNo: string | null; equipmentType: string | null;
+  startedAt: string; finishedAt: string; shift: string | null; groupLeader: string | null; remarks: string | null; rowVersion: string;
+  devices: { deviceId: string; deviceCode: string; serialNumber: string }[];
+  details: { egi?: string | null; source_power?: string | null; spm_version?: string | null; area?: string | null; location_detail?: string | null; ip_address?: string | null; ip_cpe?: string | null; ip_vhms?: string | null };
+  photos: { photoId: string; slotKey: string; caption: string | null }[];
+}
 
 const photoSlots: { key: PhotoSlot; label: string; required: boolean }[] = [
   { key: "mh02_installed", label: "MH02 terpasang", required: true },
@@ -79,13 +87,16 @@ export default function InstallationCreateApi() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-  const [editRequested, setEditRequested] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editRecord, setEditRecord] = useState<EditRecord | null>(null);
+  const isEdit = editId !== null;
   const keyRef = useRef<string | null>(null);
   const submitting = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    setEditRequested(new URLSearchParams(window.location.search).has("edit"));
+    const requestedEdit = new URLSearchParams(window.location.search).get("edit");
+    setEditId(requestedEdit);
     keyRef.current = window.sessionStorage.getItem("mh02-installation-create-key");
     setLoading(true);
     setError("");
@@ -93,11 +104,22 @@ export default function InstallationCreateApi() {
       getJson<Reference>("/api/dotnet/reference", controller.signal),
       getDevices(controller.signal),
       getJson<Unit[]>("/api/dotnet/fleet-units?available=true", controller.signal),
-    ]).then(([nextReference, nextDevices, nextUnits]) => {
+      requestedEdit ? getJson<EditRecord>(`/api/dotnet/installations/${encodeURIComponent(requestedEdit)}`, controller.signal) : Promise.resolve(null),
+    ]).then(([nextReference, nextDevices, nextUnits, record]) => {
       if (!Array.isArray(nextReference.sites) || !Array.isArray(nextReference.lookups) || !Array.isArray(nextUnits))
         throw new Error("Data referensi tidak valid.");
       setReference(nextReference); setDevices(nextDevices); setUnits(nextUnits);
       setSiteId((previous) => previous || (nextReference.sites.length === 1 ? String(nextReference.sites[0].siteId) : ""));
+      if (record) {
+        // Edit mode: prefill the form from the stored installation (the Site and form number stay fixed).
+        setEditRecord(record); setSiteId(String(record.siteId));
+        setDeviceCode(record.devices[0]?.deviceCode ?? ""); setUnitNo(record.unitNo ?? "");
+        setStartedAt(record.startedAt.slice(0, 16)); setFinishedAt(record.finishedAt.slice(0, 16));
+        setShift(record.shift ?? ""); setGroupLeader(record.groupLeader ?? ""); setRemarks(record.remarks ?? "");
+        setSourcePower(record.details.source_power ?? ""); setSpmVersion(record.details.spm_version ?? ""); setArea(record.details.area ?? "");
+        setLocationDetail(record.details.location_detail ?? ""); setIpAddress(record.details.ip_address ?? "");
+        setIpCpe(record.details.ip_cpe ?? ""); setIpVhms(record.details.ip_vhms ?? "");
+      }
     }).catch((reason: unknown) => {
       if (!controller.signal.aborted) { setReference(null); setError(reason instanceof Error ? reason.message : "Data referensi tidak tersedia."); }
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -119,9 +141,19 @@ export default function InstallationCreateApi() {
   }, [zoomed]);
 
   const selectedSite = reference?.sites.find((site) => String(site.siteId) === siteId);
-  const selectedUnit = units.find((unit) => unit.unitNo === unitNo && String(unit.siteId) === siteId);
-  const availableDevices = devices.filter((device) => String(device.siteId) === siteId);
-  const availableUnits = units.filter((unit) => String(unit.siteId) === siteId);
+  // In edit mode the installed device and its Unit are not "available" any more, but they must stay selectable.
+  const currentDevice = editRecord?.devices[0];
+  const availableDevices: Device[] = [
+    ...(editRecord && currentDevice && !devices.some((device) => device.deviceCode === currentDevice.deviceCode)
+      ? [{ deviceId: currentDevice.deviceId, deviceCode: currentDevice.deviceCode, serialNumber: currentDevice.serialNumber, siteId: editRecord.siteId }] : []),
+    ...devices.filter((device) => String(device.siteId) === siteId),
+  ];
+  const availableUnits: Unit[] = [
+    ...(editRecord?.unitNo && !units.some((unit) => unit.unitNo === editRecord.unitNo)
+      ? [{ unitId: "current", unitNo: editRecord.unitNo, siteId: editRecord.siteId, equipmentType: editRecord.equipmentType ?? "", egi: editRecord.details.egi ?? null }] : []),
+    ...units.filter((unit) => String(unit.siteId) === siteId),
+  ];
+  const selectedUnit = availableUnits.find((unit) => unit.unitNo === unitNo && String(unit.siteId) === siteId);
   const choices = (category: string) => (reference?.lookups ?? []).filter((entry) => entry.category === category && (entry.siteId === null || String(entry.siteId) === siteId));
   const duration = useMemo(() => {
     if (!startedAt || !finishedAt) return null;
@@ -157,8 +189,56 @@ export default function InstallationCreateApi() {
     if (finishedAt > maxFinishLocal) {
       setError("Waktu selesai tidak boleh berada di masa depan pada zona waktu site."); return;
     }
-    if (photoSlots.some((slot) => slot.required && !photos[slot.key])) {
+    if (!isEdit && photoSlots.some((slot) => slot.required && !photos[slot.key])) {
       setError("Lengkapi foto MH02 terpasang, Node-RED, dan antena GPS."); return;
+    }
+    if (isEdit && editRecord) {
+      // Only the fields that really changed are sent. The server re-validates device, Unit and times as a creation would.
+      const original: Record<string, string> = {
+        deviceCode: editRecord.devices[0]?.deviceCode ?? "", unitNo: editRecord.unitNo ?? "",
+        startedAt: editRecord.startedAt.slice(0, 16), finishedAt: editRecord.finishedAt.slice(0, 16),
+        shift: editRecord.shift ?? "", groupLeader: editRecord.groupLeader ?? "", remarks: editRecord.remarks ?? "",
+        sourcePower: editRecord.details.source_power ?? "", spmVersion: editRecord.details.spm_version ?? "", area: editRecord.details.area ?? "",
+        locationDetail: editRecord.details.location_detail ?? "", ipAddress: editRecord.details.ip_address ?? "",
+        ipCpe: editRecord.details.ip_cpe ?? "", ipVhms: editRecord.details.ip_vhms ?? "",
+      };
+      const next: Record<string, string> = {
+        deviceCode, unitNo, startedAt, finishedAt, shift, groupLeader, remarks: remarks.trim(), sourcePower, spmVersion, area,
+        locationDetail: locationDetail.trim(), ipAddress: ipAddress.trim(), ipCpe: ipCpe.trim(), ipVhms: ipVhms.trim(),
+      };
+      const patch: Record<string, string> = {};
+      for (const [field, value] of Object.entries(next)) {
+        if (value !== original[field] && !(field === "shift" && value === "")) patch[field] = value;
+      }
+      if (Object.keys(patch).length === 0) { setError("Tidak ada perubahan untuk disimpan."); return; }
+      submitting.current = true; setSaving(true); setError("");
+      try {
+        const response = await fetch(`/api/dotnet/installations/${encodeURIComponent(editRecord.activityId)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rowVersion: editRecord.rowVersion, ...patch }),
+        });
+        if (!response.ok) {
+          const result: { error?: { code?: string } } | null = await response.json().catch(() => null);
+          const messages: Record<string, string> = {
+            STALE_VERSION: "Data sudah diubah orang lain. Muat ulang halaman lalu coba lagi.",
+            LATER_ACTIVITY_EXISTS: "Tidak dapat diubah: sudah ada aktivitas yang lebih baru pada perangkat ini.",
+            DEVICE_ARCHIVED: "Perangkat sudah diarsipkan; instalasi tidak dapat diubah.",
+            DEVICE_STATE_CHANGED: "Kondisi perangkat sudah berubah setelah instalasi ini, sehingga tidak dapat dikembalikan dengan aman.",
+            DEVICE_NOT_AVAILABLE: "Perangkat yang dipilih tidak berstatus RFU.", DEVICE_NOT_FOUND: "Perangkat tidak ditemukan pada site ini.",
+            UNIT_OCCUPIED: "Unit sudah memiliki perangkat.", UNIT_NOT_FOUND: "Unit tidak ditemukan pada site ini.", UNIT_INACTIVE: "Unit tidak aktif.",
+            FINISH_BEFORE_START: "Waktu selesai tidak boleh sebelum waktu mulai.", FINISH_IN_FUTURE: "Waktu selesai tidak boleh di masa depan.",
+            INVALID_DATETIME: "Format waktu tidak valid atau waktunya ambigu.", SUPERADMIN_ONLY: "Hanya Superadmin yang dapat mengedit instalasi.",
+            UNAUTHENTICATED: "Sesi login berakhir. Masuk kembali.", VALIDATION_FAILED: "Periksa kembali data yang diubah.",
+            DATABASE_CONSTRAINT: "Database menolak kombinasi data.", CONFLICT: "Data bertabrakan dengan perubahan lain. Muat ulang dan coba lagi.",
+            COMMIT_OUTCOME_UNKNOWN: "Hasil penyimpanan belum dapat dipastikan. Muat ulang halaman sebelum mencoba lagi.",
+            BACKEND_UNAVAILABLE: "Backend tidak tersedia.", DATABASE_UNAVAILABLE: "Database tidak tersedia.",
+          };
+          throw new Error(messages[result?.error?.code ?? ""] ?? `Perubahan gagal disimpan (${result?.error?.code ?? response.status}).`);
+        }
+        router.push(`/operations/installation/${encodeURIComponent(editRecord.activityId)}`);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Perubahan belum dapat disimpan.");
+      } finally { submitting.current = false; setSaving(false); }
+      return;
     }
     submitting.current = true; setSaving(true); setError("");
     try {
@@ -205,7 +285,6 @@ export default function InstallationCreateApi() {
           UNAUTHENTICATED: "Sesi login berakhir. Masuk kembali dan periksa riwayat instalasi.",
           SITE_FORBIDDEN: "Akun tidak memiliki akses ke site ini.",
           REQUEST_TOO_LARGE: "Ukuran total foto terlalu besar.",
-          UNSUPPORTED_MEDIA_TYPE: "Backend belum menerima format upload ini. Mulai ulang backend versi terbaru.",
           UNSUPPORTED_MEDIA_TYPE: "Format request tidak didukung. Muat ulang backend agar mendukung multipart foto.",
         };
         const code = result?.error?.code;
@@ -223,60 +302,158 @@ export default function InstallationCreateApi() {
     } finally { submitting.current = false; setSaving(false); }
   };
 
-  if (editRequested) return <div className="space-y-4 text-sm text-slate-700"><p>Edit instalasi belum tersedia.</p><Link className="text-blue-700" href="/operations/installation">Kembali</Link></div>;
+  if (isEdit && currentUser.role !== "superadmin") return <div className="space-y-4 text-sm text-slate-700"><p>Hanya Superadmin yang dapat mengedit instalasi.</p><Link className="text-blue-700" href="/operations/installation">Kembali</Link></div>;
+  const backHref = isEdit && editId ? `/operations/installation/${encodeURIComponent(editId)}` : "/operations/installation";
+
+  const sectionClass = "bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4";
+  const sectionTitle = (icon: React.ReactNode, text: string) => (
+    <div className="flex items-center gap-2 pb-3 border-b border-slate-100">{icon}<h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">{text}</h2></div>
+  );
+  const inputClass = "w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed";
+  const readOnlyClass = "w-full px-3 py-2 text-xs bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-medium cursor-not-allowed";
+  const fieldLabel = "block text-xs font-semibold text-slate-700 mb-1";
+  const required = <span className="text-rose-500">*</span>;
+  const lookup = (category: string, value: string, set: (next: string) => void, placeholder: string) => (
+    <select value={value} onChange={(event) => set(event.target.value)} className={inputClass}>
+      <option value="">{placeholder}</option>
+      {choices(category).map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}
+    </select>
+  );
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 pb-12">
-      <div className="flex items-center justify-between gap-3">
-        <div><Link href="/operations/installation" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500"><ArrowLeft className="h-4 w-4" />Installation</Link><h1 className="mt-2 text-xl font-bold text-slate-800">New Installation</h1></div>
-        {reference && <button type="button" disabled={saving || loading} onClick={() => setReload((value) => value + 1)} title="Segarkan referensi" aria-label="Segarkan referensi" className="rounded-md border border-slate-300 p-2 text-slate-600 disabled:opacity-50"><RefreshCw className="h-4 w-4" /></button>}
+    <div className="space-y-6 max-w-5xl mx-auto pb-16">
+      {/* Breadcrumb */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Link href="/operations/installation" className="hover:text-blue-600 transition flex items-center gap-1 font-medium"><ArrowLeft className="h-3.5 w-3.5" /><span>Riwayat Installation</span></Link>
+          <span>/</span>
+          <span className="text-slate-800 font-semibold">{isEdit ? `Edit Formulir (${editRecord?.formNumber ?? "..."})` : "Formulir Pemasangan Perangkat"}</span>
+        </div>
+        <Link href={backHref} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition shadow-sm"><X className="h-3.5 w-3.5" /><span>Batal (Cancel)</span></Link>
       </div>
-      {error && <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
-      {loading ? <p role="status" className="py-8 text-sm text-slate-500">Memuat data referensi...</p> : !reference ? <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => setReload((value) => value + 1)}>Coba lagi</button> : (
+
+      {/* Title card */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">Formulir Lapangan • Installation</span>
+            {isEdit && <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">Mode Edit (Superadmin)</span>}
+            <span className="text-[11px] font-medium text-slate-500">Site: {selectedSite?.name ?? "-"}</span>
+          </div>
+          <h1 className="text-xl font-bold text-slate-800 mt-2 flex items-center gap-2.5"><Wrench className="h-6 w-6 text-blue-600" />{isEdit ? "Edit Laporan Pemasangan Perangkat (Installation)" : "Formulir Pemasangan Perangkat (Installation)"}</h1>
+          <p className="text-xs text-slate-500 mt-1">Pencatatan pemasangan unit telematika SMARTD DISPLAY pada armada, konfigurasi jaringan, dan dokumentasi foto.</p>
+        </div>
+        <div className="flex items-start gap-2 shrink-0">
+          <div className="text-right bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl">
+            <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1 justify-end"><Lock className="h-3 w-3 text-slate-400" />No. Dokumen Otomatis:</p>
+            <p className="text-base font-bold tabular-nums text-blue-600 mt-0.5">{editRecord?.formNumber ?? "Dibuat saat disimpan"}</p>
+          </div>
+          {reference && <button type="button" disabled={saving || loading} onClick={() => setReload((value) => value + 1)} title="Segarkan referensi" aria-label="Segarkan referensi" className="rounded-lg border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className="h-4 w-4" /></button>}
+        </div>
+      </div>
+
+      {error && <div role="alert" className="p-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-xs font-medium flex items-start gap-2.5"><AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" /><span>{error}</span></div>}
+      {loading ? <p role="status" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Memuat data referensi...</p> : !reference ? <button type="button" className="text-sm font-semibold text-blue-700" onClick={() => setReload((value) => value + 1)}>Coba lagi</button> : (
         <form onSubmit={submit} className="space-y-6">
-          {reference.sites.length === 0 && <p role="status" className="text-sm text-amber-700">Belum ada site yang tersedia untuk akun ini.</p>}
-          {siteId && availableDevices.length === 0 && <p role="status" className="text-sm text-amber-700">Tidak ada perangkat RFU pada site ini.</p>}
-          {siteId && availableUnits.length === 0 && <p role="status" className="text-sm text-amber-700">Tidak ada unit tersedia pada site ini.</p>}
-          <fieldset disabled={saving} className="space-y-6">
-            <section className="border-b border-slate-200 pb-5"><h2 className="text-sm font-bold text-slate-800">Perangkat dan Unit</h2><div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <label className={labelClass}>Site<select required value={siteId} onChange={(event) => { setSiteId(event.target.value); setDeviceCode(""); setUnitNo(""); setArea(""); setGroupLeader(""); setShift(""); setSourcePower(""); setSpmVersion(""); }} className={fieldClass}><option value="">Pilih site</option>{reference.sites.map((site) => <option key={site.siteId} value={site.siteId}>{site.name}</option>)}</select></label>
-              <label className={labelClass}>Perangkat RFU<select required value={deviceCode} disabled={!siteId} onChange={(event) => setDeviceCode(event.target.value)} className={fieldClass}><option value="">Pilih perangkat</option>{availableDevices.map((device) => <option key={device.deviceId} value={device.deviceCode}>{device.deviceCode} - {device.serialNumber}</option>)}</select></label>
-              <label className={labelClass}>Unit tersedia<select required value={unitNo} disabled={!siteId} onChange={(event) => setUnitNo(event.target.value)} className={fieldClass}><option value="">Pilih unit</option>{availableUnits.map((unit) => <option key={unit.unitId} value={unit.unitNo}>{unit.unitNo} - {unit.equipmentType}</option>)}</select></label>
-              <label className={labelClass}>Tipe alat<input readOnly value={selectedUnit?.equipmentType ?? ""} className={fieldClass} /></label>
-              <label className={labelClass}>EGI<input readOnly value={selectedUnit?.egi ?? ""} className={fieldClass} /></label>
-              <label className={labelClass}>Teknisi<input readOnly value={`${currentUser.name} (${currentUser.nrp})`} className={fieldClass} /></label>
-            </div></section>
-            <section className="border-b border-slate-200 pb-5"><h2 className="text-sm font-bold text-slate-800">Waktu dan Lokasi</h2><div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <label className={labelClass}>Waktu mulai {selectedSite?.timeZoneLabel && `(${selectedSite.timeZoneLabel})`}<input type="datetime-local" required value={startedAt} onChange={(event) => setStartedAt(event.target.value)} className={fieldClass} /></label>
-              <label className={labelClass}>Waktu selesai {selectedSite?.timeZoneLabel && `(${selectedSite.timeZoneLabel})`}<input type="datetime-local" required value={finishedAt} onChange={(event) => setFinishedAt(event.target.value)} className={fieldClass} /></label>
-              <label className={labelClass}>Durasi<input readOnly value={duration === null ? "" : `${Math.floor(duration / 60)} jam ${duration % 60} menit`} className={fieldClass} /></label>
-              <label className={labelClass}>Shift<select value={shift} onChange={(event) => setShift(event.target.value)} className={fieldClass}><option value="">Pilih shift</option>{choices("shift").map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}</select></label>
-              <label className={labelClass}>Area<select value={area} onChange={(event) => setArea(event.target.value)} className={fieldClass}><option value="">Pilih area</option>{choices("area").map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}</select></label>
-              <label className={labelClass}>Lokasi detail<input maxLength={200} value={locationDetail} onChange={(event) => setLocationDetail(event.target.value)} className={fieldClass} /></label>
-              <label className={labelClass}>Group Leader<select value={groupLeader} onChange={(event) => setGroupLeader(event.target.value)} className={fieldClass}><option value="">Pilih Group Leader</option>{choices("group_leader").map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}</select></label>
-            </div></section>
-            <section className="border-b border-slate-200 pb-5"><h2 className="text-sm font-bold text-slate-800">Konfigurasi</h2><div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <label className={labelClass}>Source power<select value={sourcePower} onChange={(event) => setSourcePower(event.target.value)} className={fieldClass}><option value="">Pilih source power</option>{choices("source_power").map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}</select></label>
-              <label className={labelClass}>SPM version<select value={spmVersion} onChange={(event) => setSpmVersion(event.target.value)} className={fieldClass}><option value="">Pilih versi</option>{choices("spm_version").map((entry) => <option key={`${entry.siteId}-${entry.label}`} value={entry.label}>{entry.label}</option>)}</select></label>
-              <label className={labelClass}>IP SMARTD<input maxLength={45} value={ipAddress} onChange={(event) => setIpAddress(event.target.value)} className={fieldClass} /></label>
-              <label className={labelClass}>IP CPE<input maxLength={45} value={ipCpe} onChange={(event) => setIpCpe(event.target.value)} className={fieldClass} /></label>
-              <label className={labelClass}>IP VHMS<input maxLength={45} value={ipVhms} onChange={(event) => setIpVhms(event.target.value)} className={fieldClass} /></label>
-              <label className={`${labelClass} md:col-span-3`}>Catatan<textarea maxLength={1000} rows={3} value={remarks} onChange={(event) => setRemarks(event.target.value)} className={fieldClass} /></label>
-            </div></section>
-            <section><h2 className="text-sm font-bold text-slate-800">Dokumentasi Foto</h2><div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {photoSlots.map((slot) => <div key={slot.key} className="min-w-0 rounded-md border border-slate-200 bg-white p-3">
-                <p className="text-xs font-semibold text-slate-700">{slot.label}{slot.required ? " *" : ""}</p>
-                {previews[slot.key] ? <button type="button" onClick={() => setZoomed(slot.key)} className="relative mt-2 block h-32 w-full overflow-hidden rounded border border-slate-200" title="Perbesar foto"><img src={previews[slot.key]} alt={slot.label} className="h-full w-full object-contain" /><ZoomIn className="absolute bottom-1 right-1 h-4 w-4 text-slate-700" /></button> : <div className="mt-2 flex h-32 items-center justify-center rounded border border-dashed border-slate-300 text-slate-400"><Camera className="h-6 w-6" /></div>}
-                <label className="mt-2 inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-blue-700"><Camera className="h-4 w-4" />{photos[slot.key] ? "Ganti foto" : "Pilih foto"}<input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => { choosePhoto(slot.key, event.target.files?.[0]); event.target.value = ""; }} /></label>
-                {photos[slot.key] && <button type="button" title="Hapus foto" aria-label={`Hapus ${slot.label}`} onClick={() => { setPhotos((previous) => ({ ...previous, [slot.key]: null })); setCaptions((previous) => ({ ...previous, [slot.key]: "" })); }} className="ml-3 text-rose-600"><Trash2 className="h-4 w-4" /></button>}
-                <label className={`${labelClass} mt-2`}>Keterangan<input maxLength={200} value={captions[slot.key]} onChange={(event) => setCaptions((previous) => ({ ...previous, [slot.key]: event.target.value }))} className={fieldClass} /></label>
-              </div>)}
-            </div></section>
-            <div className="flex justify-end gap-3 border-t border-slate-200 pt-4"><button type="button" disabled={saving} onClick={() => router.push("/operations/installation")} className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">Batal</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Menyimpan..." : "Simpan"}</button></div>
+          {reference.sites.length === 0 && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Belum ada site yang tersedia untuk akun ini.</p>}
+          {!isEdit && siteId && availableDevices.length === 0 && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Tidak ada perangkat RFU pada site ini.</p>}
+          {!isEdit && siteId && availableUnits.length === 0 && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Tidak ada unit tersedia pada site ini.</p>}
+          <fieldset disabled={saving} className="space-y-6 min-w-0">
+            {/* 1 */}
+            <div className={sectionClass}>
+              {sectionTitle(<Calendar className="h-4 w-4 text-blue-600" />, "1. Informasi Pemasangan & Jadwal")}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={fieldLabel}>Site {required}</label>
+                  <select required disabled={isEdit} value={siteId} onChange={(event) => { setSiteId(event.target.value); setDeviceCode(""); setUnitNo(""); setArea(""); setGroupLeader(""); setShift(""); setSourcePower(""); setSpmVersion(""); }} className={inputClass}><option value="">Pilih site</option>{reference.sites.map((site) => <option key={site.siteId} value={site.siteId}>{site.name}</option>)}</select></div>
+                <div><label className={fieldLabel}>Shift Kerja</label>{lookup("shift", shift, setShift, "-- Pilih Shift --")}</div>
+                <div><label className={fieldLabel}>Waktu Mulai {selectedSite?.timeZoneLabel && `(${selectedSite.timeZoneLabel})`} {required}</label><input type="datetime-local" required value={startedAt} onChange={(event) => setStartedAt(event.target.value)} className={inputClass} /></div>
+                <div><label className={fieldLabel}>Waktu Selesai {selectedSite?.timeZoneLabel && `(${selectedSite.timeZoneLabel})`} {required}</label><input type="datetime-local" required value={finishedAt} onChange={(event) => setFinishedAt(event.target.value)} className={inputClass} /></div>
+              </div>
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><Clock className="h-4 w-4 text-blue-600" /><span className="font-semibold">Durasi Pengerjaan Otomatis:</span><span className="font-bold tabular-nums text-slate-800">{duration === null ? "-" : `${Math.floor(duration / 60)} jam ${duration % 60} menit`}</span></div>
+            </div>
+
+            {/* 2 */}
+            <div className={sectionClass}>
+              {sectionTitle(<Cpu className="h-4 w-4 text-blue-600" />, "2. Perangkat & Unit")}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={fieldLabel}>{isEdit ? "Perangkat" : "Perangkat RFU"} {required}</label>
+                  <select required value={deviceCode} disabled={!siteId} onChange={(event) => setDeviceCode(event.target.value)} className={inputClass}><option value="">Pilih perangkat</option>{availableDevices.map((device) => <option key={device.deviceId} value={device.deviceCode}>{device.deviceCode} - {device.serialNumber}</option>)}</select></div>
+                <div><label className={fieldLabel}>Unit Number (Nomor Lambung) {required}</label>
+                  <select required value={unitNo} disabled={!siteId} onChange={(event) => setUnitNo(event.target.value)} className={inputClass}><option value="">Pilih unit</option>{availableUnits.map((unit) => <option key={unit.unitId} value={unit.unitNo}>{unit.unitNo} - {unit.equipmentType}</option>)}</select></div>
+                <div><label className={fieldLabel}>Tipe Alat Berat</label><input readOnly value={selectedUnit?.equipmentType ?? ""} placeholder="Otomatis mengikuti unit" className={readOnlyClass} /></div>
+                <div><label className={fieldLabel}>EGI (Model Unit)</label><input readOnly value={selectedUnit?.egi ?? ""} placeholder="Otomatis mengikuti unit" className={readOnlyClass} /></div>
+                <div><label className={fieldLabel}>Area</label>{lookup("area", area, setArea, "Pilih area")}</div>
+                <div><label className={fieldLabel}>Lokasi Detail</label><input maxLength={200} value={locationDetail} onChange={(event) => setLocationDetail(event.target.value)} className={inputClass} /></div>
+              </div>
+            </div>
+
+            {/* 3 */}
+            <div className={sectionClass}>
+              {sectionTitle(<User className="h-4 w-4 text-blue-600" />, "3. Informasi Personel")}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={fieldLabel}>Teknisi Pelaksana</label><input readOnly value={`${currentUser.name} (${currentUser.nrp})`} className={readOnlyClass} /></div>
+                <div><label className={fieldLabel}>Group Leader (GL) <span className="font-normal text-slate-400">(penanggung jawab)</span></label>{lookup("group_leader", groupLeader, setGroupLeader, "Pilih Group Leader")}</div>
+              </div>
+            </div>
+
+            {/* 4 */}
+            <div className={sectionClass}>
+              {sectionTitle(<Network className="h-4 w-4 text-blue-600" />, "4. Konfigurasi & Jaringan")}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={fieldLabel}>Source Power</label>{lookup("source_power", sourcePower, setSourcePower, "Pilih source power")}</div>
+                <div><label className={fieldLabel}>SPM Version</label>{lookup("spm_version", spmVersion, setSpmVersion, "Pilih versi")}</div>
+                <div><label className={fieldLabel}>IP SMARTD</label><input maxLength={45} value={ipAddress} onChange={(event) => setIpAddress(event.target.value)} className={inputClass} /></div>
+                <div><label className={fieldLabel}>IP CPE</label><input maxLength={45} value={ipCpe} onChange={(event) => setIpCpe(event.target.value)} className={inputClass} /></div>
+                <div><label className={fieldLabel}>IP VHMS</label><input maxLength={45} value={ipVhms} onChange={(event) => setIpVhms(event.target.value)} className={inputClass} /></div>
+              </div>
+            </div>
+
+            {/* 5 */}
+            <div className={sectionClass}>
+              {sectionTitle(<FileText className="h-4 w-4 text-blue-600" />, "5. Catatan Teknis (Remarks)")}
+              <textarea maxLength={1000} rows={3} value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Catatan kondisi pemasangan, kendala, atau hal yang perlu ditindaklanjuti..." className={inputClass} />
+            </div>
+
+            {/* 6 */}
+            {isEdit ? (
+              <div className={sectionClass}>
+                <div className="flex items-center gap-2 pb-3 border-b border-slate-100"><Camera className="h-4 w-4 text-blue-600" /><h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">6. Dokumentasi Foto</h2></div>
+                <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">Foto tidak dapat diubah dari form edit. Foto yang sudah tersimpan tetap utuh.</p>
+                {(editRecord?.photos.length ?? 0) > 0 && <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{editRecord?.photos.map((photo) => <div key={photo.photoId} className="rounded-lg border border-slate-200 p-2"><img src={`/api/dotnet/photos/${encodeURIComponent(photo.photoId)}`} alt={photo.slotKey} className="h-24 w-full object-contain" /><p className="mt-1 truncate text-[11px] text-slate-500">{photoSlots.find((slot) => slot.key === photo.slotKey)?.label ?? photo.slotKey}</p></div>)}</div>}
+              </div>
+            ) : (
+            <div className={sectionClass}>
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2"><Camera className="h-4 w-4 text-blue-600" /><h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">6. Dokumentasi Foto Pemasangan (4 Slot)</h2></div>
+                <span className="text-[11px] text-slate-400 hidden sm:inline">JPEG / PNG / WebP, maks. 10 MB. Klik thumbnail untuk memperbesar.</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {photoSlots.map((slot, index) => (
+                  <div key={slot.key} className="relative min-w-0 rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+                    <p className="text-xs font-bold text-slate-700">{index + 1}. {slot.label} {slot.required ? required : <span className="font-normal text-slate-400">(opsional)</span>}</p>
+                    {previews[slot.key]
+                      ? <button type="button" onClick={() => setZoomed(slot.key)} className="relative block h-40 w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50" title="Perbesar foto"><img src={previews[slot.key]} alt={slot.label} className="h-full w-full object-contain" /><ZoomIn className="absolute bottom-1.5 right-1.5 h-4 w-4 rounded bg-white/90 p-0.5 text-slate-700" /></button>
+                      : <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50/60 text-slate-400"><div className="text-center"><Camera className="mx-auto h-6 w-6" /><p className="mt-1 text-[11px]">Pilih / Unggah Foto</p></div></div>}
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="relative inline-flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Upload className="h-3.5 w-3.5" />{photos[slot.key] ? "Ganti Foto" : "Unggah Foto"}<input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => { choosePhoto(slot.key, event.target.files?.[0]); event.target.value = ""; }} /></label>
+                      {photos[slot.key] && <button type="button" title="Hapus foto" aria-label={`Hapus ${slot.label}`} onClick={() => { setPhotos((previous) => ({ ...previous, [slot.key]: null })); setCaptions((previous) => ({ ...previous, [slot.key]: "" })); }} className="rounded-lg border border-rose-200 p-1.5 text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>}
+                    </div>
+                    <input maxLength={200} value={captions[slot.key]} onChange={(event) => setCaptions((previous) => ({ ...previous, [slot.key]: event.target.value }))} placeholder="Keterangan foto (opsional)..." className={inputClass} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            )}
+
+            {/* Actions */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+              <Link href={backHref} className="w-full sm:w-auto px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition text-center">Batal (Cancel)</Link>
+              <button type="submit" disabled={saving} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed"><Save className="h-4 w-4" />{saving ? "Menyimpan..." : isEdit ? "Simpan Perubahan" : "Simpan Instalasi"}</button>
+            </div>
           </fieldset>
         </form>
       )}
-      {zoomed && previews[zoomed] && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setZoomed(null)}><div role="dialog" aria-modal="true" aria-label={photoSlots.find((slot) => slot.key === zoomed)?.label} className="relative max-h-full max-w-5xl" onClick={(event) => event.stopPropagation()}><button type="button" onClick={() => setZoomed(null)} title="Tutup" aria-label="Tutup" className="absolute right-2 top-2 rounded bg-white p-2 text-slate-800"><X className="h-4 w-4" /></button><img src={previews[zoomed]} alt={photoSlots.find((slot) => slot.key === zoomed)?.label} className="max-h-[85vh] max-w-full object-contain" /></div></div>}
+      {zoomed && previews[zoomed] && createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4" onClick={() => setZoomed(null)}><div role="dialog" aria-modal="true" aria-label={photoSlots.find((slot) => slot.key === zoomed)?.label} className="relative max-h-full max-w-5xl" onClick={(event) => event.stopPropagation()}><button type="button" onClick={() => setZoomed(null)} title="Tutup" aria-label="Tutup" className="absolute right-2 top-2 rounded bg-white p-2 text-slate-800"><X className="h-4 w-4" /></button><img src={previews[zoomed]} alt={photoSlots.find((slot) => slot.key === zoomed)?.label} className="max-h-[85vh] max-w-full object-contain" /></div></div>, document.body)}
     </div>
   );
 }

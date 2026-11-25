@@ -4,10 +4,12 @@ import React from "react";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { useAuth } from "@/features/auth/AuthContext";
+import { isIdSegment, usePageLabel } from "./PageLabel";
 
 export function Topbar() {
   const pathname = usePathname();
   const { currentUser, toggleSidebar } = useAuth();
+  const pageLabel = usePageLabel();
 
   // Simple breadcrumb generator
   const segments = pathname?.split("/").filter(Boolean) || [];
@@ -15,7 +17,7 @@ export function Topbar() {
     segments.length === 0
       ? "Dashboard"
       : segments
-          .map((s) => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, " "))
+          .map((s) => (isIdSegment(s) ? (pageLabel ?? "Detail") : s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, " ")))
           .join(" / ");
 
   const todayStr = new Intl.DateTimeFormat("id-ID", {

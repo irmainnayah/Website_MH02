@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { AuthProvider, useAuth } from "@/features/auth/AuthContext";
+import { PageLabelProvider } from "./PageLabel";
 
 function AuthenticatedShell({ children }: { children: ReactNode }) {
   const isLoginPage = usePathname() === "/login";
@@ -21,7 +22,7 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
   }
 
   return (
-      <div className="flex h-screen w-screen overflow-hidden bg-slate-50">
+      <div className="relative flex h-screen w-screen overflow-hidden bg-slate-50">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <Topbar />
@@ -34,5 +35,5 @@ function AuthenticatedShell({ children }: { children: ReactNode }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  return <AuthProvider><AuthenticatedShell>{children}</AuthenticatedShell></AuthProvider>;
+  return <AuthProvider><PageLabelProvider><AuthenticatedShell>{children}</AuthenticatedShell></PageLabelProvider></AuthProvider>;
 }

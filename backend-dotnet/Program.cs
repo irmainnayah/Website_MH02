@@ -54,6 +54,7 @@ AuthEndpoints.Map(app, GetConnectionString);
 MfaEndpoints.Map(app, GetConnectionString);
 ReferenceEndpoints.Map(app, GetConnectionString);
 DeviceEndpoints.Map(app, GetConnectionString);
+DeviceWrites.Map(app, GetConnectionString);
 DashboardEndpoints.Map(app, GetConnectionString);
 InstallationEndpoints.Map(app, GetConnectionString);
 InstallationWrites.Map(app, GetConnectionString);

@@ -16,10 +16,12 @@ import {
   X,
   RotateCcw,
   ChevronLeft,
+  Plus,
 } from "lucide-react";
 import { DeviceStatus } from "@/types/dashboard";
 import { getTimelineDirectory, TimelineDevice } from "@/lib/timeline-api";
 import { useAuth } from "@/features/auth/AuthContext";
+import DeviceFormModal from "@/components/devices/DeviceFormModal";
 
 function renderStatusBadge(status: DeviceStatus) {
   switch (status) {
@@ -67,7 +69,10 @@ export default function TimelineDirectoryPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
-  const [pageSize, setPageSize] = useState(24);
+  const [formOpen, setFormOpen] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [notice, setNotice] = useState("");
+  const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [districtFilter, setDistrictFilter] = useState("all");
@@ -80,7 +85,7 @@ export default function TimelineDirectoryPage() {
       .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Gagal memuat perangkat."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [archived]);
+  }, [archived, refresh]);
   useEffect(() => { setPage(1); }, [search, districtFilter, statusFilter, archived, pageSize]);
 
   const filteredDevices = useMemo(() => {
@@ -120,14 +125,26 @@ export default function TimelineDirectoryPage() {
           </p>
         </div>
 
-        <Link
-          href="/reports/activity-log"
-          className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition"
-        >
-          <span>Buka Activity Log (Semua Perangkat)</span>
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setNotice(""); setFormOpen(true); }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition"
+          >
+            <Plus className="h-4 w-4" />
+            <span>New Device</span>
+          </button>
+          <Link
+            href="/reports/activity-log"
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition"
+          >
+            <span>Buka Activity Log (Semua Perangkat)</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </div>
+      {notice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
+      {formOpen && <DeviceFormModal device={null} onClose={() => setFormOpen(false)} onSaved={(result) => { setFormOpen(false); setNotice(`Device ${result.deviceCode} ditambahkan dengan status In Stock - RFU.`); setRefresh((value) => value + 1); }} />}
 
       {/* Filter and Search Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
@@ -241,7 +258,7 @@ export default function TimelineDirectoryPage() {
       </div>
       {!loading && !loadError && filteredDevices.length === 0 && <p role="status" className="py-8 text-center text-sm text-slate-500">Tidak ada perangkat yang sesuai filter.</p>}
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
-        <label className="flex items-center gap-2">Jumlah per halaman<select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1"><option>12</option><option>24</option><option>48</option><option>100</option></select><span>{filteredDevices.length} perangkat</span></label>
+        <label className="flex items-center gap-2">Jumlah per halaman<select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1"><option>10</option><option>25</option><option>50</option><option>100</option></select><span>{filteredDevices.length} perangkat</span></label>
         <div className="flex items-center gap-2"><button type="button" title="Halaman sebelumnya" aria-label="Halaman sebelumnya" disabled={currentPage === 1} onClick={() => setPage((previous) => Math.max(1, previous - 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><span>{currentPage} / {totalPages}</span><button type="button" title="Halaman berikutnya" aria-label="Halaman berikutnya" disabled={currentPage === totalPages} onClick={() => setPage((previous) => Math.min(totalPages, previous + 1))} className="rounded border border-slate-200 p-2 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button></div>
       </div>
     </div>

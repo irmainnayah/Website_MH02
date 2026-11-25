@@ -3,13 +3,13 @@ using NpgsqlTypes;
 
 public static class DeviceEndpoints
 {
-    private const string DeviceColumns = """
+    internal const string DeviceColumns = """
         SELECT d.device_id, d.device_code, d.serial_number, st.status_id, st.code, st.label,
                d.site_id, s.name, d.current_location_site_id, d.current_unit_id, fu.unit_no,
                et.name, fu.egi, d.health_check_status, d.last_maintenance_date, d.notes,
                d.is_deleted, d.row_version, d.created_at
         """;
-    private const string DeviceJoins = """
+    internal const string DeviceJoins = """
         FROM devices d
         JOIN device_statuses st ON st.status_id = d.status_id
         JOIN sites s ON s.site_id = d.site_id
@@ -116,7 +116,7 @@ public static class DeviceEndpoints
         });
     }
 
-    private static object ToDevice(NpgsqlDataReader reader)
+    internal static object ToDevice(NpgsqlDataReader reader)
     {
         var unit = reader.IsDBNull(9) ? null : new
         {
